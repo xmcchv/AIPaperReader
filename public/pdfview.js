@@ -46,8 +46,17 @@ function isHeading(text) {
   if (/https?:\/\/|www\./i.test(text)) return false;
   if (!isSectionTitle(text)) return false;
   if (looksLikeFormula(text)) return false;
+  // 折行的脚注/正文常以「编号 + 大写词」开头、在连字符处被切断
+  if (/[-‐‑]$/.test(text)) return false;
+  const words = text.split(/\s+/);
   // 纯英文「标题」超过 4 个词一般是正文，比如 "results to the base model."
-  if (/^[A-Za-z]/.test(text) && text.split(/\s+/).length > 4) return false;
+  if (/^[A-Za-z]/.test(text) && words.length > 4) return false;
+  if (/^\d/.test(text)) {
+    if (words.length > 8) return false;
+    // 去掉编号前缀再判断是不是一整句话（"3.4. Implementation" 里的句点属于编号）
+    const rest = text.replace(/^\d{1,2}(?:\.\d{1,2})*\.?\s+/, '');
+    if (/[.!?]\s+[A-Z]/.test(rest)) return false;
+  }
   return true;
 }
 
@@ -57,6 +66,8 @@ export function itemBoxes(items, pageHeight) {
   for (const it of items) {
     const str = (it.str || '').replace(/\u00a0/g, ' ');
     if (!str.trim() || !it.width || !it.height) continue;
+    // 旋转文本（arXiv 页边印章、竖排图注）不是正文，混进来会切断段落
+    if (Math.abs(it.transform[1]) > 0.01 || Math.abs(it.transform[2]) > 0.01) continue;
     const fh = Math.abs(it.transform[3]) || it.height;
     const x0 = it.transform[4];
     const baseline = pageHeight - it.transform[5];
@@ -175,40 +186,75 @@ export function detectLayout(lines, boxes, pageWidth) {
   return { twoColumn, midX, twoSided, lineCount: textLines.length, ratio, columnGap };
 }
 
-/** 出现次数足够多的取值（用于找本栏最常见的左边界） */
-function dominantValue(values) {
+/** 出现次数足够多的取值（取众数，用于找本栏最常见的行距 / 左右边界） */
+function dominantValue(values, { bucket = 1, minRatio = 0.2 } = {}) {
+  if (!values.length) return null;
   const counts = new Map();
+  for (const v of values) {
+    const key = Math.round(v / bucket) * bucket;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
   let best = null;
   let bestCount = 0;
-  for (const v of values) {
-    const c = (counts.get(v) || 0) + 1;
-    counts.set(v, c);
-    if (c > bestCount) {
-      bestCount = c;
-      best = v;
+  for (const [key, count] of counts) {
+    if (count > bestCount) {
+      best = key;
+      bestCount = count;
     }
   }
-  return bestCount >= Math.max(2, values.length * 0.3) ? best : null;
+  return bestCount >= Math.max(2, values.length * minRatio) ? best : null;
 }
 
-/** 单栏内：按行距 + 缩进 + 标题/图注把行片段拼成段 */
+/** 行距基准：先取众数，再在众数附近取中位数（段间距不会把基准拉大） */
+function baseLeading(deltas) {
+  if (!deltas.length) return 0;
+  const mode = dominantValue(deltas, { bucket: 0.5, minRatio: 0.15 });
+  if (mode === null) return deltas[0];
+  const near = deltas.filter((d) => Math.abs(d - mode) <= 1.2).sort((a, b) => a - b);
+  return near.length ? near[Math.floor(near.length / 2)] : mode;
+}
+
+/**
+ * 单栏内：按行距 + 缩进 + 行尾是否排满把行片段拼成段。
+ *
+ * 关键点（都踩过坑）：
+ * - 行距、左右边界都用「众数」而不是分位数——脚注/页眉/图注比正文宽或窄，
+ *   用分位数会把本栏边界带偏，正文每行都被误判成「没排满的最后一行」
+ * - 首行缩进要看「下一行是否缩回去」——列表项（hanging indent）的续行
+ *   相对正文左边界同样右移，只比较左边界会把每一行都切成新段
+ */
 function segmentColumn(segments, pageIndex, col) {
   if (!segments.length) return [];
 
-  const list = [...segments].sort((a, b) => a.baseline - b.baseline);
+  const list = [...segments].sort((a, b) => a.baseline - b.baseline || a.x0 - b.x0);
   const deltas = [];
   for (let i = 1; i < list.length; i += 1) {
     const d = list[i].baseline - list[i - 1].baseline;
     if (d > 0.5) deltas.push(d);
   }
-  deltas.sort((a, b) => a - b);
-  // 段内行距是本栏最常见的间距，取 25% 分位当基准再乘系数
-  const base = deltas.length ? deltas[Math.floor(deltas.length * 0.25)] : 0;
-  const breakGap = base > 0 ? Math.max(base * 1.4, base + 2.5) : Infinity;
-  const leftEdge = dominantValue(list.filter((s) => s.text.length > 20).map((s) => Math.round(s.x0)));
-  // 本栏的右边界：上一行如果明显没排满，说明那是段落最后一行
+  const base = baseLeading(deltas);
+  // 行内公式/上下标会让某几行的基线偏移，相邻行距偶尔比基准大 40% 左右，
+  // 所以「段间距」的阈值要保守一些：真正的分段还有首行缩进和短尾行兜底
+  const breakGap = base > 0 ? Math.max(base * 1.5, base + 3) : Infinity;
+
+  const longTexts = list.filter((s) => s.text.length > 15);
+  const leftEdge = dominantValue(longTexts.map((s) => Math.round(s.x0)), { bucket: 1, minRatio: 0.2 });
   const rights = list.map((s) => s.x1).sort((a, b) => a - b);
-  const rightEdge = rights.length ? rights[Math.floor(rights.length * 0.9)] : 0;
+  const rightEdge =
+    dominantValue(longTexts.map((s) => Math.round(s.x1)), { bucket: 1, minRatio: 0.2 }) ??
+    (rights.length ? rights[Math.floor(rights.length * 0.9)] : 0);
+  // 正文字高：用来排除「脚注上标 + 大写单词」被误判成章节标题（脚注字号明显更小）
+  const fhs = longTexts.map((s) => s.fh).sort((a, b) => a - b);
+  const bodyFh = fhs.length ? fhs[Math.floor(fhs.length / 2)] : 0;
+
+  const lines = [];
+  for (const seg of list) {
+    const text = seg.text.replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+    if (text.length < 4) continue; // 图内零散标签
+    if (text.length < 6 && /^\d+$/.test(text)) continue; // 页码
+    lines.push({ ...seg, text });
+  }
 
   const paras = [];
   let cur = null;
@@ -217,22 +263,32 @@ function segmentColumn(segments, pageIndex, col) {
     cur = null;
   };
 
-  for (const seg of list) {
-    const text = seg.text.replace(/\s+/g, ' ').trim();
-    if (!text) continue;
-    if (text.length < 4) continue; // 图内零散标签
-    if (text.length < 6 && /^\d+$/.test(text)) continue; // 页码
+  for (let i = 0; i < lines.length; i += 1) {
+    const seg = lines[i];
+    const next = lines[i + 1];
 
     // 上一段是标题就直接收尾——标题必须独占一段
     if (cur && cur.heading) flush();
 
-    const heading = isHeading(text);
-    const caption = CAPTION_RE.test(text);
+    const heading =
+      isHeading(seg.text) && (bodyFh === 0 || seg.fh >= bodyFh * 0.95);
+    const caption = CAPTION_RE.test(seg.text);
     const gap = cur ? seg.baseline - cur.lastBaseline : Number.POSITIVE_INFINITY;
-    // 首行缩进（明显右移）也算新段，用于那种段间不留额外间距的排版
-    const indented = leftEdge !== null && seg.x0 > leftEdge + seg.fh * 0.9 && base > 0 && gap > base * 0.9;
+    // 首行缩进：本行比正文左边界右移，而且下一行又缩回左侧（段落续行）。
+    // 下一行本身是标题/图注/列表项时必须停下——否则会把上一段的最后一行判成「新段首行」
+    const nextStartsBlock =
+      !next || BULLET_RE.test(next.text) || isHeading(next.text) || CAPTION_RE.test(next.text);
+    const indented =
+      Boolean(cur) &&
+      base > 0 &&
+      gap > base * 0.95 &&
+      leftEdge !== null &&
+      seg.x0 > leftEdge + seg.fh * 0.6 &&
+      !nextStartsBlock &&
+      next.x0 < seg.x0 - seg.fh * 0.6;
     // 上一行没排满（段落最后一行）→ 这里一定是新段
-    const afterShortLine = cur !== null && rightEdge > 0 && cur.lastX1 < rightEdge - seg.fh * 1.6;
+    const afterShortLine =
+      Boolean(cur) && rightEdge > 0 && cur.lastX1 < rightEdge - Math.max(seg.fh * 1.8, 6);
     const startsNew = !cur || heading || caption || gap > breakGap || indented || afterShortLine;
 
     if (startsNew) {
@@ -244,27 +300,35 @@ function segmentColumn(segments, pageIndex, col) {
         y0: seg.baseline - seg.fh,
         x1: seg.x1,
         y1: seg.baseline,
-        text,
+        text: seg.text,
         heading,
         caption,
         lastBaseline: seg.baseline,
         lastX1: seg.x1,
+        lastFh: seg.fh,
       };
     } else {
       const prev = cur.text;
-      if (/[a-z]-$/i.test(prev) && /^[a-z]/.test(text)) {
-        cur.text = prev.slice(0, -1) + text; // 跨行断词
+      if (/[a-z]-$/i.test(prev) && /^[a-z]/.test(seg.text)) {
+        cur.text = prev.slice(0, -1) + seg.text; // 跨行断词
       } else {
-        cur.text = joinText(prev, text);
+        cur.text = joinText(prev, seg.text);
       }
       cur.x0 = Math.min(cur.x0, seg.x0);
       cur.x1 = Math.max(cur.x1, seg.x1);
       cur.y1 = Math.max(cur.y1, seg.baseline);
       cur.lastBaseline = seg.baseline;
       cur.lastX1 = seg.x1;
+      cur.lastFh = seg.fh;
     }
   }
   flush();
+
+  for (const para of paras) {
+    // 段落最后一行是否排满：跨栏/跨页续接时用来判断「这句话确实没写完」
+    para.fullLastLine = rightEdge > 0 && para.lastX1 >= rightEdge - Math.max(para.lastFh * 1.5, 4);
+    para.rects = [{ page: para.page, col: para.col, x0: para.x0, y0: para.y0, x1: para.x1, y1: para.y1 }];
+  }
   return paras;
 }
 
@@ -280,6 +344,20 @@ export function groupParagraphs(segments, pageIndex) {
     paras.push(...segmentColumn(list, pageIndex, col));
   }
   return paras;
+}
+
+/**
+ * 页面内的阅读顺序：通栏元素（跨中线的标题/图注）把页面切成若干横带，
+ * 带内先左栏后右栏。按栏号排序会把页尾的图注排到整页正文前面。
+ */
+function readingOrder(paras, segments) {
+  const spans = segments.filter((s) => s.col === 2).map((s) => s.baseline);
+  const bandOf = (para) => {
+    let band = 0;
+    for (const y of spans) if (y < para.y0 - 0.5) band += 1;
+    return band;
+  };
+  return paras.sort((a, b) => bandOf(a) - bandOf(b) || a.col - b.col || a.y0 - b.y0);
 }
 
 /** 一页的完整解析：文本项 → 段落（含坐标、栏号、类型） */
@@ -318,12 +396,105 @@ export function buildPageParagraphs(items, pageWidth, pageHeight, pageIndex = 0)
     }
   }
 
+  const allSegments = [...merged.values()];
   return {
-    paras: groupParagraphs([...merged.values()], pageIndex),
+    paras: readingOrder(groupParagraphs(allSegments, pageIndex), allSegments),
     twoColumn,
     midX,
-    segments: [...merged.values()],
+    segments: allSegments,
   };
+}
+
+const SENTENCE_END_RE = /[.!?。！？:：;；)】」”"']$/;
+/** 列表项/编号行：这些行天然带悬挂缩进，不能当作「首行缩进」 */
+const BULLET_RE = /^(?:[•·▪◦‣∙]\s*|[-–—]\s+|\d{1,2}[.)]\s+|[A-Za-z][.)]\s+)/;
+
+/** 句子没写完：结尾没有句末标点，或者停在断词连字符上 */
+function endsMidSentence(text) {
+  const t = String(text || '').trimEnd();
+  if (!t) return false;
+  if (/[-‐‑]$/.test(t)) return true;
+  return !SENTENCE_END_RE.test(t);
+}
+
+/** 下一段以字母 / 数字 / 中文开头，才像是同一句的续写 */
+function startsContinued(text) {
+  const t = String(text || '').trimStart();
+  if (!t) return false;
+  return /^[A-Za-z0-9,;:)\]]/.test(t) || /^[\u4e00-\u9fff]/.test(t);
+}
+
+/**
+ * 跨栏 / 跨页的段落续接：双栏论文里一段话常从上一栏底部接到下一栏顶部，
+ * 不接起来会让同一句话被切成两段（顺带让侧栏文本可读）。
+ * 只在栏/页边界处判断，且要求上一段最后一行排满、没有句末标点。
+ */
+function continuesNext(prev, next) {
+  if (!prev || !next) return false;
+  if (prev.heading || next.heading || next.caption) return false;
+  if (isLikelyNoise(prev) || isLikelyNoise(next)) return false;
+  if (prev.page === next.page && prev.col === next.col) return false;
+  if (prev.page !== next.page) {
+    if (next.col !== 0) return false; // 只接「本页最后一栏 → 下一页第一栏」
+  } else if (prev.col === 2) {
+    if (next.col !== 0) return false; // 通栏图注的剩余文字落在下一横带的左栏
+  } else if (!(prev.col < next.col)) {
+    return false;
+  }
+  const hyphenated = /[-‐‑]$/.test(prev.text.trimEnd());
+  // 图注也可能跨栏/跨页续写：只认断词连字符这种硬证据，免得把正文吸进图注
+  if (prev.caption) return hyphenated && prev.fullLastLine && startsContinued(next.text);
+  if (!prev.fullLastLine && !hyphenated) return false;
+  return endsMidSentence(prev.text) && startsContinued(next.text);
+}
+
+/** 图内零散标签：短、没有句末标点，跨页/跨栏接续时可以直接跳过 */
+function isLikelyNoise(para) {
+  if (!para || para.heading || para.caption) return false;
+  const text = para.text.trim();
+  return text.length < 60 && !SENTENCE_END_RE.test(text);
+}
+
+/** 脚注：以 1-2 位脚注编号开头，排版上夹在正文段落中间 */
+function isFootnoteLike(para) {
+  if (!para || para.heading || para.caption) return false;
+  return /^\d{1,2}\s/.test(para.text.trim());
+}
+
+/** 跨页/跨栏时，上一段和本段之间常隔着图注/图内标签，往回找真正的续接对象 */
+function findMergeTarget(out, para) {
+  for (let i = out.length - 1; i >= 0 && out.length - i <= 32; i -= 1) {
+    const cand = out[i];
+    if (continuesNext(cand, para)) return cand;
+    // 中间隔着图注、图内标签或脚注 → 继续往回找；遇到真正的正文段落就停
+    if (!cand.caption && !isLikelyNoise(cand) && !isFootnoteLike(cand)) break;
+  }
+  return null;
+}
+
+/** 文档级：把跨栏 / 跨页断开的同一段接回来（保留多块热区坐标）。导出供离线测试 */
+export function mergeFlowingParagraphs(paras) {
+  const out = [];
+  for (const para of paras) {
+    const prev = findMergeTarget(out, para);
+    if (prev) {
+      const nextText = para.text.trim();
+      if (/[-‐‑]$/.test(prev.text.trimEnd()) && /^[a-z]/.test(nextText)) {
+        prev.text = prev.text.trimEnd().slice(0, -1) + nextText;
+      } else {
+        prev.text = joinText(prev.text, nextText);
+      }
+      prev.rects.push(...para.rects);
+      prev.x1 = Math.max(prev.x1, para.x1);
+      prev.y1 = Math.max(prev.y1, para.y1);
+      prev.lastX1 = para.lastX1;
+      prev.lastFh = para.lastFh;
+      prev.fullLastLine = para.fullLastLine;
+      continue;
+    }
+    out.push(para);
+  }
+  return out;
 }
 /* -------------------------------- 视图 -------------------------------- */
 
@@ -332,6 +503,8 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
     doc: null,
     pdfjs: null,
     pages: [],
+    paras: [],
+    paraById: new Map(),
     text: '',
     scale: 1,
     renderedScale: 0,
@@ -432,17 +605,16 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
       pageEl.appendChild(canvas);
 
       const hot = el('div', 'pdf-hot');
-      for (let i = 0; i < pageData.paras.length; i += 1) {
-        const para = pageData.paras[i];
+      for (const { para, rect } of pageData.boxes) {
         const box = el(
           'div',
           `pdf-para${para.heading ? ' is-heading' : ''}${para.caption ? ' is-caption' : ''}`,
         );
-        box.dataset.pid = `${pageData.index}-${i}`;
-        box.style.left = `${para.x0 * state.scale}px`;
-        box.style.top = `${para.y0 * state.scale}px`;
-        box.style.width = `${Math.max(8, (para.x1 - para.x0) * state.scale)}px`;
-        box.style.height = `${Math.max(8, (para.y1 - para.y0) * state.scale)}px`;
+        box.dataset.pid = para.id;
+        box.style.left = `${rect.x0 * state.scale}px`;
+        box.style.top = `${rect.y0 * state.scale}px`;
+        box.style.width = `${Math.max(8, (rect.x1 - rect.x0) * state.scale)}px`;
+        box.style.height = `${Math.max(8, (rect.y1 - rect.y0) * state.scale)}px`;
         if (para.heading) box.appendChild(el('span', 'pdf-heading-tag', para.text));
         hot.appendChild(box);
       }
@@ -480,9 +652,7 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
     host.addEventListener('click', (ev) => {
       const para = ev.target.closest?.('.pdf-para');
       if (para) {
-        const pid = para.dataset.pid || '';
-        const [pageIdx, paraIdx] = pid.split('-').map(Number);
-        const data = state.pages[pageIdx]?.paras?.[paraIdx];
+        const data = state.paraById.get(para.dataset.pid || '');
         if (data) showCard(data, para);
         return;
       }
@@ -503,22 +673,37 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
       const pdfjs = await getPdfjs();
       const doc = await pdfjs.getDocument({ data: new Uint8Array(bytes) }).promise;
       const pages = [];
-      const textParts = [];
+      const allParas = [];
       let columns = 1;
 
       for (let i = 1; i <= doc.numPages; i += 1) {
         const proxy = await doc.getPage(i);
         const viewport = proxy.getViewport({ scale: 1 });
         const content = await proxy.getTextContent();
-        const { paras, twoColumn } = buildPageParagraphs(content.items, viewport.width, viewport.height);
+        const { paras, twoColumn } = buildPageParagraphs(content.items, viewport.width, viewport.height, i - 1);
         if (twoColumn) columns = 2;
-        pages.push({ index: i - 1, proxy, width: viewport.width, height: viewport.height, paras });
-        for (const para of paras) textParts.push(para.heading ? `\n${para.text}\n` : para.text);
+        pages.push({ index: i - 1, proxy, width: viewport.width, height: viewport.height, boxes: [] });
+        allParas.push(...paras);
       }
+
+      // 跨栏 / 跨页把同一段接回来，再按页分配热区
+      const paras = mergeFlowingParagraphs(allParas);
+      paras.forEach((para, i) => {
+        para.id = `p${i}`;
+      });
+      for (const para of paras) {
+        for (const rect of para.rects) {
+          const pageData = pages[rect.page];
+          if (pageData) pageData.boxes.push({ para, rect });
+        }
+      }
+      const textParts = paras.map((para) => (para.heading ? `\n${para.text}\n` : para.text));
 
       state.doc = doc;
       state.pdfjs = pdfjs;
       state.pages = pages;
+      state.paras = paras;
+      state.paraById = new Map(paras.map((para) => [para.id, para]));
       state.text = textParts.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
       state.renderedScale = 0;
 
@@ -581,18 +766,15 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
     locate(term) {
       const needle = String(term || '').trim().toLowerCase();
       if (!needle) return false;
-      for (const pageData of state.pages) {
-        for (let i = 0; i < pageData.paras.length; i += 1) {
-          const para = pageData.paras[i];
-          if (!para.text.toLowerCase().includes(needle)) continue;
-          const node = host.querySelector(`.pdf-para[data-pid="${pageData.index}-${i}"]`);
-          if (!node) continue;
-          node.scrollIntoView({ block: 'center', behavior: 'smooth' });
-          node.classList.add('flash');
-          setTimeout(() => node.classList.remove('flash'), 1800);
-          showCard(para, node);
-          return true;
-        }
+      for (const para of state.paras) {
+        if (!para.text.toLowerCase().includes(needle)) continue;
+        const node = host.querySelector(`.pdf-para[data-pid="${para.id}"]`);
+        if (!node) continue;
+        node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        node.classList.add('flash');
+        setTimeout(() => node.classList.remove('flash'), 1800);
+        showCard(para, node);
+        return true;
       }
       return false;
     },
@@ -601,6 +783,8 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
       state.renderToken += 1;
       state.doc = null;
       state.pages = [];
+      state.paras = [];
+      state.paraById = new Map();
       state.text = '';
       state.renderedScale = 0;
       clearPages();

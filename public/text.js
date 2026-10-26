@@ -24,8 +24,24 @@ const SECTION_RE =
 export function isSectionTitle(para) {
   if (!para || para.length >= 90) return false;
   if (!SECTION_RE.test(para) && !/^[一二三四五六七八九十]+[、.]/.test(para)) return false;
+  // SECTION_RE 带 i 标志，表格行（"18 layers 27.94"）和 "method error" 之类也会命中，这里收紧：
+  // 编号标题后面必须紧跟大写字母或中文；非编号标题必须以大写字母或中文开头
+  if (/^\d/.test(para)) {
+    if (!/^\d{1,2}(?:\.\d{1,2})*\.?\s*[A-Z\u4e00-\u9fff]/.test(para)) return false;
+  } else if (!/^[\u4e00-\u9fff]/.test(para) && !/^[A-Z]/.test(para)) {
+    return false;
+  }
+  // 折行的脚注/正文常在连字符处被切断，不是标题
+  if (/[-‐‑]$/.test(para)) return false;
   // 纯英文的「标题」超过 4 个词，基本都是正文句子
   if (/^[A-Za-z]/.test(para) && para.split(/\s+/).length > 4) return false;
+  if (/^\d/.test(para)) {
+    const words = para.trim().split(/\s+/);
+    if (words.length > 8) return false;
+    // 去掉编号前缀再判断是不是一整句话（"3.4. Implementation" 里的句点属于编号）
+    const rest = para.replace(/^\d{1,2}(?:\.\d{1,2})*\.?\s+/, '');
+    if (/[.!?]\s+[A-Z]/.test(rest)) return false;
+  }
   return true;
 }
 

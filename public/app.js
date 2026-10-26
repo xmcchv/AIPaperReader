@@ -1,5 +1,6 @@
 import { createDiagram } from './diagram.js';
 import { createPdfView } from './pdfview.js';
+import { renderMathIn } from './math.js';
 import { escapeHtml, isSectionTitle, parseReading, renderBlocks, splitParagraphs } from './text.js';
 
 /* --------------------------------- 基础工具 -------------------------------- */
@@ -26,6 +27,7 @@ const state = {
   config: null,
   presets: {},
   running: false,
+  readingStreaming: false,
   abort: null,
   aborted: false,
   selection: '',
@@ -281,50 +283,113 @@ async function restoreCachedPdf() {
 /* --------------------------------- 精读渲染 -------------------------------- */
 
 
+const READING_EMPTY_HTML =
+  '<div class="empty-state"><p class="empty-title">还没有精读结果</p><p class="empty-sub">点右上角「开始精读」，AI 会按固定小节拆解这篇论文。</p></div>';
+
+/**
+ * 精读卡片按小节增量维护：流式时只重画内容变化的那一张，
+ * 不再每个 token 都把整份 innerHTML 重建一遍（那样会整块闪动、滚动条乱跳）。
+ */
+let readingCards = [];
+let readingRenderTimer = 0;
+let readingLastPaint = 0;
+let demoToastShown = false;
+
 function clearReading() {
   state.readingText = '';
   state.structure = null;
-  $('#reading-list').innerHTML =
-    '<div class="empty-state"><p class="empty-title">还没有精读结果</p><p class="empty-sub">点右上角「开始精读」，AI 会按固定小节拆解这篇论文。</p></div>';
+  clearTimeout(readingRenderTimer);
+  readingRenderTimer = 0;
+  readingCards = [];
+  $('#reading-list').innerHTML = READING_EMPTY_HTML;
   $('#reading-status').textContent = '';
 }
 
-let renderQueued = false;
-let demoToastShown = false;
-function queueReadingRender(streaming) {
-  if (renderQueued) return;
-  renderQueued = true;
-  requestAnimationFrame(() => {
-    renderQueued = false;
-    paintReading(streaming);
-  });
+function queueReadingRender() {
+  if (readingRenderTimer) return;
+  // 约 80ms 一帧：看起来仍是逐字出现，又不会每个 token 都重排一次
+  const wait = Math.max(0, 80 - (performance.now() - readingLastPaint));
+  readingRenderTimer = setTimeout(() => {
+    readingRenderTimer = 0;
+    requestAnimationFrame(() => paintReading());
+  }, wait);
 }
 
-function paintReading(streaming) {
+function ensureReadingCard(list, index) {
+  let entry = readingCards[index];
+  if (entry) return entry;
+  const node = document.createElement('section');
+  node.className = 'card';
+  const heading = document.createElement('h4');
+  const body = document.createElement('div');
+  body.className = 'reading-body';
+  node.appendChild(heading);
+  node.appendChild(body);
+  list.appendChild(node);
+  entry = { node, heading, body, html: '', title: '' };
+  readingCards[index] = entry;
+  return entry;
+}
+
+function paintReading() {
+  readingLastPaint = performance.now();
   const list = $('#reading-list');
   const sections = parseReading(state.readingText);
-  const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 120;
+  const streaming = state.readingStreaming;
 
   if (!sections.length) {
-    list.innerHTML = '<div class="empty-state"><p class="empty-sub">正在生成…</p></div>';
+    if (!streaming && state.readingError) {
+      readingCards = [];
+      list.innerHTML = `<div class="reading-error">${escapeHtml(state.readingError)}</div>`;
+      return;
+    }
+    if (readingCards.length) {
+      readingCards = [];
+      list.innerHTML = '<div class="empty-state"><p class="empty-sub">正在生成…</p></div>';
+    }
     return;
   }
 
-  list.innerHTML = sections
-    .map((section, i) => {
-      const isLast = i === sections.length - 1;
-      const title = section.title || '精读';
-      return `<section class="card${streaming && isLast ? ' streaming' : ''}">
-        <h4>${escapeHtml(title)}</h4>
-        ${renderBlocks(section.lines)}
-      </section>`;
-    })
-    .join('');
+  const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 120;
+  // 第一张卡片出现时清掉「正在生成…」占位
+  if (!readingCards.length && list.querySelector('.empty-state')) list.innerHTML = '';
+
+  while (readingCards.length > sections.length) {
+    const extra = readingCards.pop();
+    extra.node.remove();
+  }
+
+  sections.forEach((section, i) => {
+    const entry = ensureReadingCard(list, i);
+    const title = section.title || '精读';
+    const isLast = streaming && i === sections.length - 1;
+    entry.node.classList.toggle('streaming', isLast);
+    if (entry.title !== title) {
+      entry.heading.textContent = title;
+      entry.title = title;
+    }
+    // 只有内容真的变了才重排 + 重渲染公式
+    const html = renderBlocks(section.lines);
+    if (entry.html !== html) {
+      entry.body.innerHTML = html;
+      entry.html = html;
+      renderMathIn(entry.body);
+    }
+  });
+
+  const errorEl = list.querySelector('.reading-error');
+  if (!streaming && state.readingError) {
+    if (errorEl) errorEl.textContent = state.readingError;
+    else
+      list.insertAdjacentHTML(
+        'beforeend',
+        `<div class="reading-error">${escapeHtml(state.readingError)}</div>`,
+      );
+  } else if (errorEl) {
+    errorEl.remove();
+  }
 
   if (streaming && nearBottom) list.scrollTop = list.scrollHeight;
-  if (!streaming && state.readingError) {
-    list.insertAdjacentHTML('beforeend', `<div class="reading-error">${escapeHtml(state.readingError)}</div>`);
-  }
 }
 
 /* -------------------------------- 结构化解图 ------------------------------- */
@@ -384,11 +449,15 @@ async function runAnalysis() {
   setRunning(true);
   state.abort = new AbortController();
   state.aborted = false;
+  state.readingStreaming = true;
   state.readingText = '';
   state.readingError = '';
   state.structure = null;
+  readingCards = [];
+  clearTimeout(readingRenderTimer);
+  readingRenderTimer = 0;
   renderStructure(null);
-  $('#reading-list').innerHTML = '<section class="card streaming"><h4>精读中</h4><p>模型正在读这篇论文…</p></section>';
+  $('#reading-list').innerHTML = '<div class="empty-state"><p class="empty-sub">模型正在读这篇论文…</p></div>';
   $('#reading-status').textContent = '生成中';
   switchPaneIfNarrow('reading');
 
@@ -400,7 +469,7 @@ async function runAnalysis() {
       (evt) => {
         if (evt.type === 'delta') {
           state.readingText += evt.text;
-          queueReadingRender(true);
+          queueReadingRender();
         } else if (evt.type === 'meta') {
           $('#reading-status').textContent = `生成中 · ${evt.model || ''}`;
         } else if (evt.type === 'thinking') {
@@ -409,7 +478,6 @@ async function runAnalysis() {
         } else if (evt.type === 'notice') {
           toast(evt.message, 4600);
         } else if (evt.type === 'done') {
-          paintReading(false);
           $('#reading-status').textContent = evt.demo ? 'demo 示例结果' : '已完成';
         } else if (evt.type === 'error') {
           state.readingError = evt.message;
@@ -427,8 +495,11 @@ async function runAnalysis() {
       $('#reading-status').textContent = '出错';
     }
   } finally {
+    state.readingStreaming = false;
     setRunning(false);
-    paintReading(false);
+    clearTimeout(readingRenderTimer);
+    readingRenderTimer = 0;
+    paintReading();
   }
 
   if (!state.aborted && state.readingText.trim()) await loadStructure();
@@ -727,7 +798,9 @@ async function loadPdfFile(file) {
   status.textContent = '正在解析 PDF（提取段落与坐标）…';
   try {
     const bytes = await file.arrayBuffer();
-    const result = await pdfView.load(bytes);
+    // pdf.js 会把传入的 ArrayBuffer transfer 走（之后 byteLength 变成 0），
+    // 这里先复制一份再解析，原始 bytes 留给 IndexedDB 持久化
+    const result = await pdfView.load(bytes.slice(0));
     if (result.text.length < 200) {
       throw new Error('PDF 里几乎没抽到文本，可能是扫描件');
     }
