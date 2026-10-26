@@ -1,0 +1,155 @@
+# PaperLens · 论文精读工作台
+
+原文、AI 结构化解读、交互式图解三栏合一，**可配置任意 OpenAI 兼容模型 API**（Kimi / DeepSeek / OpenAI / 智谱 / Ollama / 自建端点）。
+
+![布局](https://img.shields.io/badge/layout-原文%20%7C%20精读%20%7C%20图解-4da3ff) ![deps](https://img.shields.io/badge/dependencies-0-3ddc97) ![node](https://img.shields.io/badge/node-%3E%3D18-339933)
+
+## 快速开始
+
+```bash
+node server/index.mjs
+# 打开 http://127.0.0.1:5173
+```
+
+（`server/index.js` 是等价别名，`node server/index.js` 也能启动。端口被占用时换一个：PowerShell 写 `$env:PORT=5175; node server/index.mjs`，bash 写 `PORT=5175 node server/index.mjs`。）
+
+没有安装步骤，没有 `npm install`：服务端只用 Node 内置模块，前端是原生 HTML/CSS/ESM。
+
+第一次启动时**未配置 API Key，会进入 demo 模式**——点「示例论文」→「开始精读」就能看到完整的三栏交互和内置示例结果（精读正文、概念卡、方法链路图都是预置的，用于先验证交互）。
+
+接着点右上角「模型设置」，填三项：
+
+| 字段 | 说明 | 例子 |
+| --- | --- | --- |
+| Base URL | OpenAI 兼容端点，一般以 `/v1` 结尾 | `https://api.deepseek.com/v1` |
+| API Key | 只写不读回，存本机 `data/config.json` | `sk-...` |
+| 模型名 | 该端点支持的模型（有候选下拉） | `deepseek-v4-flash` |
+
+点「测试连接」会真发一个 `ping` 请求验证三件套，成功后再「保存」。之后「开始精读」就是真实模型在跑。
+
+内置预设：**DeepSeek（默认）** / Kimi / OpenAI / 智谱 GLM / Ollama 本地 / 自定义。点预设会同时回填地址、模型名、`max_tokens`、`temperature`，不会只换一半。
+
+### DeepSeek / 思考型模型的两个坑
+
+1. **输出长度交给模型。** 默认请求里**不带 `max_tokens`**，由服务商按模型能力决定上限——你不需要猜一个数字。设置页的「输出上限」留空即可；只有确实要压成本时才填一个值（填了就会严格截断，界面会在被截断时提示）。历史配置里的 4096 / 8192 会在首次读取时自动清空并写回。
+2. **会先想 10 秒左右再动笔。** 模型的思维链走 `reasoning_content` 字段，这里单独接出来，**不混进精读正文**，只在状态栏显示「推理中… N 字」。所以前十几秒空白是正常的，不是卡死。
+
+想让它更快（牺牲一点推理质量）可以在设置页展开「高级：额外请求参数」填：
+
+```json
+{"thinking": {"type": "disabled"}}
+```
+
+这段会原样合并进请求体，留空表示不发送。写错 JSON 会保存失败并给出原因。
+
+模型名说明：`deepseek-v4-flash` 是 DeepSeek Flash 线路的兼容名，官方新名 `deepseek-flash` 指向同一模型，两个都能直接用（下拉里都有）。
+
+也可以用环境变量（适合不落盘 Key）：
+
+```bash
+# bash
+PAPERLENS_API_KEY=sk-xxx node server/index.mjs
+```
+
+```powershell
+# PowerShell
+$env:PAPERLENS_API_KEY='sk-xxx'; node server/index.mjs
+```
+
+可选：`PAPERLENS_BASE_URL`、`PAPERLENS_MODEL`、`PAPERLENS_PROVIDER`、`PAPERLENS_MAX_TOKENS`、`PAPERLENS_TEMPERATURE`。没设时用 DeepSeek 预设的地址与模型。
+
+## 它做了什么
+
+**载入论文**（三种方式，入口都在原文栏右上角的小按钮里）
+- 「＋PDF」：直接上传本地 PDF
+- 「arXiv」：按编号或链接抓取，抓标题、摘要，并尽量抓 arXiv HTML 全文（去掉了许可声明、参考文献等噪音）
+- 「粘贴」：直接贴正文
+- 也支持拖拽 `.txt` / `.md` / `.pdf` 到「打开论文」对话框；PDF 在浏览器本地用 pdf.js 解析，文件不上传服务器，也不会和精读结果抢版面
+
+**原文双视图**
+- **PDF 原版**（上传 PDF 后默认）：pdf.js 渲染真实页面，原版排版、图、公式都在；上面叠加解析出的**章节/段落热区**——鼠标划过整段高亮，章节标题带紫色底并浮出标题名，图注单独标色；点击任意段落弹出该段原文（可复制、可「针对这段问 AI」），顶部可缩放/适应宽度
+- **文本**：把段落摊平成可读长文，适合连续阅读与复制
+
+两个视图由原文栏右上角的 `[PDF | 文本]` 切换。PDF 原始字节会存进浏览器 IndexedDB，**刷新页面后仍能回到 PDF 原版视图**（同一篇文件才会自动恢复，换文件就重新打开）。
+
+段落框不是按行切的，也不会横跨整页：
+
+1. 先按**基线**把文本项聚成行（同一行的上下标、公式才归得进一行）
+2. 行内按 x 间隙切「片段」——**双栏论文的左右两栏就在这里分开**
+3. 判断是否双栏：看多少行在中线两侧都有文本、且两侧之间是否有稳定空隙（不依赖整页空白投影，跨栏大图挡不住）
+4. 每栏内按**行距 + 首行缩进 + 上一行是否排满**三重信号断段，标题和图注强制独立成段
+
+在三篇真实论文上验证过（单栏 Attention / 双栏 ResNet / 双栏 BERT）：
+
+| 论文 | 栏检测 | 段落框宽度 / 页宽 | 误判标题 |
+|---|---|---|---|
+| Attention（单栏，参考文献双栏） | 正文页全为单栏，仅参考文献页识别为双栏 | p50 53% | 0 |
+| ResNet（双栏） | 12/12 页 | p50 32%、p90 39%（= 栏宽） | 0 |
+| BERT（双栏） | 16/16 页 | p50 35%、p90 37%（= 栏宽） | 0 |
+
+**AI 精读**（流式）
+固定 7 个小节，边生成边渲染成卡片：一句话结论 / 要解决的问题 / 核心方法 / 关键创新 / 实验与结论 / 局限与可延伸 / 精读要点。生成中可随时点「停止」。思考型模型（DeepSeek 等）的思维链走 `reasoning_content`，单独接出来只在状态栏显示进度，不会混进正文。
+
+**结构化抽取**（第二次调用）
+精读结束后自动再请求一次，让模型输出严格 JSON：`tags` / `concepts` / `claims` / `diagram`。服务端会做容错归一化（丢悬空边、补默认 kind、限制节点数），坏 JSON 会自动重试一次。
+
+**交互图解**（自研 SVG 渲染器，无 Mermaid 依赖）
+- 按有向边做最长路径分层，自动生成「输入 → 处理 → 输出」链路
+- 横向/纵向布局按容器宽高比自动切换（右侧窄栏用纵向，放大后切回横向）
+- 滚轮缩放、拖背景平移、拖节点重排、点节点看 detail 并高亮上下游、一键重排/适应窗口/导出 SVG
+
+**追问**
+在原文里选中任意片段 → 浮出「问 AI」→ 带着该片段和已有精读笔记追问，流式回答。点「核心概念」卡片会在原文里定位并高亮该术语。
+
+## 目录结构
+
+```
+server/
+  index.mjs     HTTP 路由、SSE、静态文件（零依赖，约 300 行）
+  config.mjs    配置读写 + 预设，api_key 只落本机、回前端时打码
+  llm.mjs       OpenAI 兼容客户端：流式 SSE 解析、JSON 抽取、连通性测试
+  prompts.mjs   精读 / 结构化 / 追问三套提示词
+  paper.mjs     arXiv 抓取（abs 页 + HTML 全文，正则抽取并清洗）
+  samples.mjs   内置示例论文与 demo 模式数据
+public/
+  index.html    三栏工作台 + 两个 dialog
+  styles.css    深/浅双主题，CSS 变量驱动
+  app.js        流式渲染、状态管理、设置面板、视图切换
+  text.js       原文分段、精读 markdown 解析（纯函数，可单测）
+  pdfview.js    PDF 原版渲染 + 段落热区（坐标聚合算法可离线测试）
+  diagram.js    交互式 SVG 图解渲染器（布局算法可单独测试）
+data/config.json  运行时生成（已 .gitignore）
+```
+
+## 接口
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/config` | 当前配置（key 打码）+ 预设（含各服务商模型候选） |
+| POST | `/api/config` | 保存配置：`base_url` / `model` / `api_key` / `max_tokens` / `temperature` / `extra_body`；`{"clear_key":true}` 清除 Key |
+| POST | `/api/config/test` | 连通性测试，返回延迟与模型回复 |
+| POST | `/api/analyze` | 精读，SSE 流（`meta` / `thinking` / `delta` / `notice` / `done` / `error`） |
+| POST | `/api/structure` | 结构化 JSON（含图解数据），失败自动重试一次 |
+| POST | `/api/ask` | 追问，SSE 流 |
+| POST | `/api/paper/fetch` | 按 arXiv 编号/链接抓取论文 |
+| GET | `/api/sample` | 内置示例论文 |
+
+`/api/analyze` 的 SSE 帧格式：
+
+```
+data: {"type":"delta","text":"## 一句话结论\n"}
+data: {"type":"done","mode":"live"}
+```
+
+## 说明与边界
+
+- 服务只监听 `127.0.0.1`，API Key 保存在 `data/config.json` 明文（本机文件，已加入 `.gitignore`）。要多人共用请自行加认证层。
+- 精读正文会按长度截断（默认保留头 70% + 尾 30%，约 26000 字符），超长论文建议分章精读。
+- PDF 解析依赖从 CDN 动态加载 pdf.js；纯离线环境请改用「粘贴正文」。
+- arXiv 全文依赖 `arxiv.org/html/<id>` 是否存在，老论文可能只有摘要，此时会提示直接粘贴正文。
+- 图解质量取决于模型是否按约定结构输出；结构不合规时会被归一化兜底，缺失部分在图上表现为节点无 detail。
+
+## 快捷键
+
+- `Ctrl/Cmd + Enter`：开始 / 停止精读
+- 追问框 `Enter` 发送，`Shift + Enter` 换行

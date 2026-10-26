@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PaperLens · 论文精读工作台</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234da3ff'/%3E%3Cpath d='M9 22V10h8a4 4 0 0 1 0 8h-4' stroke='white' stroke-width='2.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">◈</span>
+        <div class="brand-text">
+          <strong>PaperLens</strong>
+          <small>原文 · 精读 · 交互图解</small>
+        </div>
+      </div>
+
+      <input id="paper-title" class="title-input" placeholder="论文标题（可留空，AI 会自动识别）" />
+
+      <div class="topbar-actions">
+        <span id="model-badge" class="badge" title="当前模型">demo 模式</span>
+        <button id="btn-open" class="btn ghost" type="button">打开论文</button>
+        <button id="btn-run" class="btn primary" type="button">
+          <span class="run-dot"></span>开始精读
+        </button>
+        <button id="btn-settings" class="btn ghost" type="button" title="模型 API 配置">模型设置</button>
+        <button id="btn-theme" class="btn icon" type="button" title="切换主题">◐</button>
+      </div>
+    </header>
+
+    <nav class="mobile-tabs" id="mobile-tabs">
+      <button class="tab active" data-pane="paper">原文</button>
+      <button class="tab" data-pane="reading">精读</button>
+      <button class="tab" data-pane="diagram">图解</button>
+    </nav>
+
+    <main class="workspace">
+      <!-- 原文 -->
+      <section class="pane" data-pane="paper">
+        <div class="pane-head">
+          <h2>原文</h2>
+          <span id="paper-stats" class="pane-meta"></span>
+          <div class="pane-tools">
+            <div class="segmented view-switch" id="paper-view-switch" hidden>
+              <button class="seg active" type="button" data-view="pdf" title="原版页面 + 段落标注">PDF</button>
+              <button class="seg" type="button" data-view="text" title="解析出来的纯文本段落">文本</button>
+            </div>
+            <button id="btn-upload-pdf" class="btn tiny" type="button" title="上传本地 PDF（在原版页面上标注段落）">＋PDF</button>
+            <button class="btn tiny" type="button" data-open="arxiv" title="按 arXiv 编号载入">arXiv</button>
+            <button class="btn tiny" type="button" data-open="paste" title="粘贴论文正文">粘贴</button>
+            <button id="btn-clear" class="btn tiny" type="button" title="清空当前论文">清空</button>
+          </div>
+        </div>
+        <div id="paper-empty" class="empty-state">
+          <p class="empty-title">先放一篇论文进来</p>
+          <p class="empty-sub">支持 arXiv 编号 / 粘贴正文 / 上传 .txt·.md·.pdf</p>
+          <div class="empty-actions">
+            <button class="btn primary" data-open="arxiv" type="button">用 arXiv 载入</button>
+            <button class="btn ghost" id="btn-sample-2" type="button">看示例论文</button>
+          </div>
+        </div>
+        <article id="paper-body" class="paper-body" hidden></article>
+        <div id="paper-pdf" class="pdf-host" hidden>
+          <div class="pdf-toolbar">
+            <button class="btn tiny" id="btn-pdf-out" type="button" title="缩小">−</button>
+            <span id="pdf-zoom" class="pdf-zoom">100%</span>
+            <button class="btn tiny" id="btn-pdf-in" type="button" title="放大">+</button>
+            <button class="btn tiny" id="btn-pdf-fit" type="button">适应宽度</button>
+          </div>
+        </div>
+        <div id="sel-tool" class="sel-tool" hidden>
+          <button class="btn tiny primary" id="btn-ask-selection" type="button">问 AI</button>
+        </div>
+      </section>
+
+      <!-- 精读 -->
+      <section class="pane" data-pane="reading">
+        <div class="pane-head">
+          <h2>AI 精读</h2>
+          <span id="reading-status" class="pane-meta"></span>
+          <div class="pane-tools">
+            <button id="btn-copy-reading" class="btn tiny" type="button">复制</button>
+            <button id="btn-rerun" class="btn tiny" type="button">重跑</button>
+          </div>
+        </div>
+        <div id="reading-list" class="reading-list">
+          <div class="empty-state">
+            <p class="empty-title">还没有精读结果</p>
+            <p class="empty-sub">点右上角「开始精读」，AI 会按固定小节拆解这篇论文。</p>
+          </div>
+        </div>
+
+        <div class="ask-dock" id="ask-dock">
+          <div class="ask-head">
+            <span>追问</span>
+            <button class="btn icon tiny" id="btn-ask-clear" type="button" title="清空对话">✕</button>
+          </div>
+          <div id="ask-thread" class="ask-thread"></div>
+          <form id="ask-form" class="ask-form">
+            <textarea id="ask-input" rows="1" placeholder="针对这篇论文提一个具体问题…"></textarea>
+            <button class="btn primary tiny" type="submit">发送</button>
+          </form>
+        </div>
+      </section>
+
+      <!-- 图解 -->
+      <section class="pane" data-pane="diagram">
+        <div class="pane-head">
+          <h2>交互图解</h2>
+          <span id="diagram-status" class="pane-meta"></span>
+          <div class="pane-tools">
+            <button id="btn-diagram-relayout" class="btn tiny" type="button" title="重新自动布局">重排</button>
+            <button id="btn-diagram-fit" class="btn tiny" type="button" title="适应窗口">适应</button>
+            <button id="btn-diagram-export" class="btn tiny" type="button" title="导出 SVG">导出</button>
+            <button id="btn-diagram-zoom" class="btn tiny" type="button" title="放大">⤢</button>
+          </div>
+        </div>
+        <div id="diagram-host" class="diagram-host">
+          <div class="empty-state">
+            <p class="empty-title">图解会出现在这里</p>
+            <p class="empty-sub">精读完成后自动生成「输入 → 处理 → 输出」的方法链路图，可拖拽、缩放、点击查看细节。</p>
+          </div>
+        </div>
+        <div class="concept-wrap">
+          <div class="concept-head">
+            <h3>核心概念</h3>
+            <span class="hint">点击概念可在原文中定位</span>
+          </div>
+          <div id="concept-list" class="concept-list"></div>
+          <div id="claim-list" class="claim-list"></div>
+        </div>
+      </section>
+    </main>
+
+    <!-- 打开论文 -->
+    <dialog id="dlg-open" class="dialog">
+      <form method="dialog" class="dialog-body">
+        <h3>打开论文</h3>
+        <div class="segmented" id="open-tabs">
+          <button type="button" class="seg active" data-tab="arxiv">arXiv</button>
+          <button type="button" class="seg" data-tab="paste">粘贴正文</button>
+          <button type="button" class="seg" data-tab="upload">上传文件</button>
+        </div>
+
+        <div class="tab-panel" data-tab="arxiv">
+          <label class="field">
+            <span>arXiv 编号或链接</span>
+            <input id="arxiv-input" placeholder="例如 1706.03762 或 https://arxiv.org/abs/2401.12345" />
+          </label>
+          <p class="hint">会抓取标题、摘要，并尽量抓 arXiv HTML 全文（需要能访问 arxiv.org）。</p>
+          <div class="dialog-actions">
+            <button type="button" class="btn primary" id="btn-arxiv-load">抓取</button>
+          </div>
+        </div>
+
+        <div class="tab-panel" data-tab="paste" hidden>
+          <label class="field">
+            <span>论文正文</span>
+            <textarea id="paste-input" rows="12" placeholder="把论文正文粘贴到这里（摘要 + 章节即可，不必是完美排版）"></textarea>
+          </label>
+          <div class="dialog-actions">
+            <button type="button" class="btn primary" id="btn-paste-load">使用这段文本</button>
+          </div>
+        </div>
+
+        <div class="tab-panel" data-tab="upload" hidden>
+          <label class="dropzone" id="dropzone">
+            <input type="file" id="file-input" accept=".txt,.md,.markdown,.pdf" hidden />
+            <strong>点击选择，或把文件拖到这里</strong>
+            <span>.txt / .md / .pdf（PDF 在浏览器本地解析，不上传服务器）</span>
+          </label>
+          <p class="hint" id="upload-status"></p>
+        </div>
+
+        <div class="dialog-foot">
+          <button type="button" class="btn ghost" id="btn-sample-dialog">载入示例论文</button>
+          <button class="btn ghost" value="cancel">关闭</button>
+        </div>
+        <p class="dialog-error" id="open-error" hidden></p>
+      </form>
+    </dialog>
+
+    <!-- 模型设置 -->
+    <dialog id="dlg-settings" class="dialog">
+      <div class="dialog-body">
+        <h3>模型 API 配置</h3>
+        <p class="hint">
+          任何 OpenAI 兼容端点都能用：只填 Base URL + API Key + 模型名。Key 只保存在本机
+          <code>data/config.json</code>，不会回传到前端。
+        </p>
+
+        <div class="preset-row" id="preset-row"></div>
+
+        <label class="field">
+          <span>Base URL</span>
+          <input id="cfg-base" placeholder="https://api.moonshot.cn/v1" />
+        </label>
+        <label class="field">
+          <span>API Key</span>
+          <input id="cfg-key" type="password" placeholder="sk-...（留空表示不修改已保存的 Key）" autocomplete="off" />
+        </label>
+        <div class="field-row">
+          <label class="field">
+            <span>模型名</span>
+            <input id="cfg-model" list="model-options" placeholder="deepseek-v4-flash" autocomplete="off" />
+            <datalist id="model-options"></datalist>
+          </label>
+          <label class="field narrow">
+            <span>输出上限</span>
+            <input id="cfg-tokens" type="number" min="0" max="131072" step="512" placeholder="留空=模型决定" />
+          </label>
+          <label class="field narrow">
+            <span>temperature</span>
+            <input id="cfg-temp" type="number" min="0" max="2" step="0.1" />
+          </label>
+        </div>
+        <p class="hint" id="cfg-tip" hidden></p>
+
+        <details class="advanced">
+          <summary>高级：额外请求参数（JSON，可选）</summary>
+          <label class="field">
+            <textarea id="cfg-extra" rows="3" placeholder='例如关闭 DeepSeek 深度思考：{"thinking": {"type": "disabled"}}'></textarea>
+          </label>
+          <p class="hint">会原样合并进请求体，用于服务商私有开关；留空表示不发送。写成非法 JSON 会保存失败。</p>
+        </details>
+
+        <div class="settings-state">
+          <span id="cfg-state" class="pane-meta"></span>
+          <button class="btn tiny ghost" id="btn-clear-key" type="button">清除已保存的 Key</button>
+        </div>
+
+        <p class="dialog-error" id="settings-error" hidden></p>
+        <p class="dialog-ok" id="settings-ok" hidden></p>
+
+        <div class="dialog-actions">
+          <button type="button" class="btn ghost" id="btn-test">测试连接</button>
+          <button type="button" class="btn primary" id="btn-save-config">保存</button>
+          <button type="button" class="btn ghost" id="btn-close-settings">关闭</button>
+        </div>
+      </div>
+    </dialog>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

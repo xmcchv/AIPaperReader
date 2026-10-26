@@ -1,0 +1,15 @@
+{
+  "name": "paperlens",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "PaperLens - 论文精读工作台：原文、AI 结构化解读与交互图解合一，可配置任意 OpenAI 兼容模型 API",
+  "main": "server/index.mjs",
+  "scripts": {
+    "start": "node server/index.mjs",
+    "dev": "node --watch server/index.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
