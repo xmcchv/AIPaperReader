@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { loadConfig, publicConfig, saveConfig, PRESETS } from './config.mjs';
+import { loadConfig, publicConfig, saveConfig, unlockConfig, PRESETS } from './config.mjs';
 import { streamChat, completeChat, extractJson, testConnection, LlmError } from './llm.mjs';
 import { readingMessages, structureMessages, askMessages, summaryMessages } from './prompts.mjs';
 import { fetchArxivPaper } from './paper.mjs';
@@ -222,7 +222,14 @@ function normalizeStructure(data) {
   out.concepts = Array.isArray(out.concepts)
     ? out.concepts
         .filter((c) => c && (c.name || c.explain))
-        .map((c) => ({ name: String(c.name || ''), explain: String(c.explain || '') }))
+        .map((c) => ({
+          name: String(c.name || ''),
+          explain: String(c.explain || ''),
+          // 原文检索词：模型可能给字符串/数组，统一成去重后的数组
+          terms: Array.isArray(c.terms)
+            ? [...new Set(c.terms.map((t) => String(t || '').trim()).filter(Boolean))].slice(0, 4)
+            : [],
+        }))
         .slice(0, 10)
     : [];
   out.claims = Array.isArray(out.claims)
@@ -416,6 +423,16 @@ async function handleFetchPaper(req, res) {
   }
 }
 
+/** 用主密码解锁已加密的 API Key（明文只在服务端内存里） */
+async function handleUnlockConfig(req, res) {
+  const body = await readBody(req);
+  const passphrase = String(body.passphrase || '').trim();
+  if (!passphrase) return sendJson(res, 400, { ok: false, error: '请输入主密码' });
+  const result = unlockConfig(passphrase);
+  if (!result.ok) return sendJson(res, 200, { ok: false, error: result.error });
+  return sendJson(res, 200, { ok: true, config: result.config });
+}
+
 async function handleTestConfig(req, res) {
   const body = await readBody(req);
   const current = loadConfig();
@@ -430,7 +447,12 @@ async function handleTestConfig(req, res) {
     })(),
     max_tokens: 64,
   };
-  if (!draft.api_key) return sendJson(res, 200, { ok: false, error: '还没有填 API Key' });
+  if (!draft.api_key) {
+    return sendJson(res, 200, {
+      ok: false,
+      error: current.locked ? 'API Key 已加密，请先输入主密码解锁' : '还没有填 API Key',
+    });
+  }
   try {
     const result = await testConnection(draft);
     sendJson(res, 200, { ok: true, ...result });
@@ -481,6 +503,8 @@ const server = http.createServer(async (req, res) => {
           }
         case 'POST /api/config/test':
           return await handleTestConfig(req, res);
+        case 'POST /api/config/unlock':
+          return await handleUnlockConfig(req, res);
         case 'POST /api/analyze':
           return await handleAnalyze(req, res);
         case 'POST /api/structure':
@@ -516,6 +540,11 @@ server.listen(PORT, HOST, () => {
   const cfg = publicConfig();
   console.log(`\n  PaperLens · 论文精读工作台`);
   console.log(`  ➜  http://${HOST}:${PORT}`);
-  console.log(`  ➜  模型：${cfg.has_key ? `${cfg.model} (${cfg.provider})` : '未配置 API Key —— 当前为 demo 模式（内置示例数据）'}`);
+  const modelLine = cfg.locked
+    ? 'API Key 已加密（未解锁）—— 在「模型设置」输入主密码，或设置 PAPERLENS_PASSPHRASE'
+    : cfg.has_key
+      ? `${cfg.model} (${cfg.provider})`
+      : '未配置 API Key —— 当前为 demo 模式（内置示例数据）';
+  console.log(`  ➜  模型：${modelLine}`);
   console.log(`  ➜  配置文件：${cfg.config_path}\n`);
 });

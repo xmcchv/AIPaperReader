@@ -764,10 +764,17 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
 
     /** 概念定位：找到含该词的段落，滚动 + 闪烁 + 弹卡片 */
     locate(term) {
-      const needle = String(term || '').trim().toLowerCase();
+      const needle = String(term || '').trim();
       if (!needle) return false;
+      // 空格/连字符视为可选分隔，兼容 "state space" 与 "state-space"、跨行断词
+      const parts = needle
+        .split(/[\s\-‐‑]+/)
+        .filter(Boolean)
+        .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      if (!parts.length) return false;
+      const pattern = new RegExp(parts.join('[\\s\\-‐‑]*'), 'i');
       for (const para of state.paras) {
-        if (!para.text.toLowerCase().includes(needle)) continue;
+        if (!pattern.test(para.text)) continue;
         const node = host.querySelector(`.pdf-para[data-pid="${para.id}"]`);
         if (!node) continue;
         node.scrollIntoView({ block: 'center', behavior: 'smooth' });

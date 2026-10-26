@@ -23,7 +23,7 @@
       <input id="paper-title" class="title-input" placeholder="论文标题（可留空，AI 会自动识别）" />
 
       <div class="topbar-actions">
-        <span id="model-badge" class="badge" title="当前模型">demo 模式</span>
+        <button id="model-badge" class="badge" type="button" title="当前模型">demo 模式</button>
         <button id="btn-open" class="btn ghost" type="button">打开论文</button>
         <button id="btn-run" class="btn primary" type="button">
           <span class="run-dot"></span>开始精读
@@ -191,8 +191,8 @@
       <div class="dialog-body">
         <h3>模型 API 配置</h3>
         <p class="hint">
-          任何 OpenAI 兼容端点都能用：只填 Base URL + API Key + 模型名。Key 只保存在本机
-          <code>data/config.json</code>，不会回传到前端。
+          任何 OpenAI 兼容端点都能用：只填 Base URL + API Key + 模型名。Key 会用主密码加密后保存在本机
+          <code>~/.paperlens/config.json</code>，不会回传到前端。
         </p>
 
         <div class="preset-row" id="preset-row"></div>
@@ -205,6 +205,16 @@
           <span>API Key</span>
           <input id="cfg-key" type="password" placeholder="sk-...（留空表示不修改已保存的 Key）" autocomplete="off" />
         </label>
+        <div class="field">
+          <span>主密码（用于加密保存 / 解密 API Key）</span>
+          <div class="field-inline">
+            <input id="cfg-pass" type="password" placeholder="首次设置 Key 时必填；重启后用它解密" autocomplete="new-password" />
+            <button class="btn tiny ghost" id="btn-unlock" type="button" hidden>解密</button>
+          </div>
+        </div>
+        <div class="settings-state">
+          <span id="cfg-lock-state" class="pane-meta"></span>
+        </div>
         <div class="field-row">
           <label class="field">
             <span>模型名</span>
@@ -284,6 +294,25 @@
           <button type="button" class="btn ghost" id="btn-export-close">取消</button>
           <button type="button" class="btn ghost" id="btn-export-html">下载 HTML</button>
           <button type="button" class="btn primary" id="btn-export-print">打印 / 保存为 PDF</button>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- 解锁加密的 API Key -->
+    <dialog id="dlg-unlock" class="dialog dialog-narrow">
+      <div class="dialog-body">
+        <h3>解锁 API Key</h3>
+        <p class="hint">
+          API Key 以密文保存在本机。输入主密码后解密到服务端内存，主密码不会落盘。
+        </p>
+        <label class="field">
+          <span>主密码</span>
+          <input id="unlock-pass" type="password" placeholder="请输入主密码" autocomplete="current-password" />
+        </label>
+        <p class="dialog-error" id="unlock-error" hidden></p>
+        <div class="dialog-actions">
+          <button type="button" class="btn ghost" id="btn-unlock-close">取消</button>
+          <button type="button" class="btn primary" id="btn-unlock-submit">解密</button>
         </div>
       </div>
     </dialog>

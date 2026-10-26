@@ -20,7 +20,7 @@ const SYSTEM = `你是一位顶级论文精读导师，擅长把晦涩的论文�
 - 中文输出，术语保留英文原文并在首次出现时用一句话解释。
 - 只依据给定论文内容，不要编造论文里没有的实验数字、数据集或结论；不确定就说"论文未明确说明"。
 - 先给结论再给推理，避免空话套话，不要复述摘要。
-- 数学公式用 LaTeX：行内 $...$，独立公式 $$...$$（界面会用 KaTeX 渲染），不要用纯 Unicode 拼公式。`;
+- 数学公式用 LaTeX：行内 $...$，独立公式 $$...$$（界面会用 KaTeX 渲染），不要用纯 Unicode 拼公式；上下标必须带花括号（如 Q^{*}、x_{i}），矩阵用 \begin{bmatrix}...\end{bmatrix} 并保证 \begin/\end 配对。`;
 
 /** 论文正文截断，控制 token */
 export function trimPaper(text, limit = 26000) {
@@ -75,7 +75,7 @@ export function structureMessages(paper, reading = '', { title = '' } = {}) {
   "one_liner": "一句话结论",
   "tags": ["领域/方法标签", "..."],
   "concepts": [
-    { "name": "关键概念", "explain": "一句话解释（不超过 40 字）" }
+    { "name": "关键概念（中文）", "explain": "一句话解释（不超过 40 字）", "terms": ["论文原文里的英文术语", "缩写"] }
   ],
   "claims": [
     { "label": "核心贡献", "text": "一句话" }
@@ -93,6 +93,7 @@ export function structureMessages(paper, reading = '', { title = '' } = {}) {
 
 约束：
 - concepts 给 4-8 个；claims 给 2-4 条；tags 给 2-5 个。
+- concepts[].terms：1-3 个**在论文原文里逐字出现**的检索词（英文术语或缩写，保留原文大小写），用于在 PDF 原文中定位；不要放中文翻译，没有把握就留空数组。
 - diagram.kind 只能取 input / process / data / output 之一。
 - diagram.nodes 给 4-9 个，必须覆盖"输入 → 关键处理环节 → 输出/结果"的完整链路，节点之间用 edges 连成有向图，不要出现孤立节点。
 - diagram.nodes[].id 用 n1..n9；edges 里只允许引用已存在的 id。

@@ -371,11 +371,14 @@ function paintReading() {
       entry.heading.textContent = title;
       entry.title = title;
     }
-    // 只有内容真的变了才重排 + 重渲染公式
+    // 只有内容真的变了才重排；公式只在流式结束后渲染，
+    // 避免 KaTeX 在公式还没写完整时替换文本节点、把后续内容吃掉
     const html = renderBlocks(section.lines);
     if (entry.html !== html) {
       entry.body.innerHTML = html;
       entry.html = html;
+      if (!streaming) renderMathIn(entry.body);
+    } else if (!streaming) {
       renderMathIn(entry.body);
     }
   });
@@ -397,6 +400,26 @@ function paintReading() {
 
 /* -------------------------------- 结构化解图 ------------------------------- */
 
+/**
+ * 概念卡上的中文名不一定出现在 PDF 原文里。
+ * 优先用模型给的原文检索词（terms），旧数据则从「中文（English term）」的括号里兜底提取。
+ */
+function conceptTerms(concept) {
+  const out = [];
+  const push = (value) => {
+    const text = String(value || '').trim();
+    if (text && !out.includes(text)) out.push(text);
+  };
+  (Array.isArray(concept?.terms) ? concept.terms : []).forEach(push);
+  for (const text of [concept?.name, concept?.explain]) {
+    for (const match of String(text || '').matchAll(/[（(]([^）)]*[A-Za-z][^）)]*)[）)]/g)) {
+      push(match[1]);
+    }
+  }
+  push(concept?.name);
+  return out.slice(0, 6);
+}
+
 function renderStructure(data) {
   const conceptList = $('#concept-list');
   const claimList = $('#claim-list');
@@ -410,10 +433,10 @@ function renderStructure(data) {
   }
 
   conceptList.innerHTML = (data.concepts || [])
-    .map(
-      (c) =>
-        `<button class="concept-chip" type="button" data-term="${escapeHtml(c.name)}"><b>${escapeHtml(c.name)}</b><span>${escapeHtml(c.explain)}</span></button>`,
-    )
+    .map((c) => {
+      const terms = conceptTerms(c);
+      return `<button class="concept-chip" type="button" data-terms="${escapeHtml(JSON.stringify(terms))}" title="在原文中定位：${escapeHtml(terms.join(' / '))}"><b>${escapeHtml(c.name)}</b><span>${escapeHtml(c.explain)}</span></button>`;
+    })
     .join('');
 
   claimList.innerHTML = (data.claims || [])
@@ -742,30 +765,49 @@ async function runExport(mode) {
 
 /* ------------------------------- 原文中定位概念 ------------------------------ */
 
-function locateTerm(term) {
-  if (!term) return;
+/** 把检索词里的空格/连字符当作可选分隔，兼容 "state space" / "state-space" / 跨行断词 */
+function findTerm(text, term) {
+  const parts = String(term || '')
+    .trim()
+    .split(/[\s\-‐‑]+/)
+    .filter(Boolean)
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (!parts.length) return null;
+  const match = new RegExp(parts.join('[\\s\\-‐‑]*'), 'i').exec(String(text || ''));
+  return match ? { index: match.index, length: match[0].length } : null;
+}
+
+/** 概念定位：依次尝试原文检索词（英文术语/缩写）→ 中文名，PDF 与文本视图都支持 */
+function locateTerm(input) {
+  const terms = (Array.isArray(input) ? input : [input])
+    .map((term) => String(term || '').trim())
+    .filter(Boolean);
+  if (!terms.length) return;
 
   // PDF 视图优先在段落热区里定位
   if (state.paperView === 'pdf' && state.hasPdf) {
-    if (pdfView.locate(term)) return;
+    for (const term of terms) {
+      if (pdfView.locate(term)) return;
+    }
     switchPaperView('text');
   }
 
   const body = $('#paper-body');
   if (!body) return;
-  const needle = term.toLowerCase();
   const paras = $$('p', body);
   let hit = null;
-  for (const p of paras) {
-    const text = p.textContent || '';
-    const idx = text.toLowerCase().indexOf(needle);
-    if (idx >= 0) {
-      hit = { p, idx, len: term.length };
-      break;
+  for (const term of terms) {
+    for (const p of paras) {
+      const found = findTerm(p.textContent || '', term);
+      if (found) {
+        hit = { p, ...found };
+        break;
+      }
     }
+    if (hit) break;
   }
   if (!hit) {
-    toast(`原文里没找到「${term}」`);
+    toast(`原文里没找到「${terms[0]}」`);
     return;
   }
   $$('mark', body).forEach((m) => {
@@ -774,9 +816,9 @@ function locateTerm(term) {
     parent.normalize();
   });
   const raw = hit.p.textContent;
-  const before = raw.slice(0, hit.idx);
-  const matched = raw.slice(hit.idx, hit.idx + hit.len);
-  const after = raw.slice(hit.idx + hit.len);
+  const before = raw.slice(0, hit.index);
+  const matched = raw.slice(hit.index, hit.index + hit.length);
+  const after = raw.slice(hit.index + hit.length);
   hit.p.innerHTML = `${escapeHtml(before)}<mark>${escapeHtml(matched)}</mark>${escapeHtml(after)}`;
   hit.p.classList.add('focused');
   hit.p.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -850,19 +892,62 @@ function updateSettingsTip() {
   $('#cfg-tip').hidden = tips.length === 0;
 }
 
+/** 用主密码解密保存在本机的 Key（成功后服务端只在内存里保留明文） */
+async function unlockWithPassphrase(passphrase) {
+  const res = await postJson('/api/config/unlock', { passphrase });
+  if (!res || res.ok === false) throw new Error(res?.error || '解密失败');
+  state.config = res.config;
+  applyBadge();
+  if ($('#dlg-settings').open) fillSettings();
+  return res.config;
+}
+
+/** 顶栏锁徽标：弹出独立的主密码对话框 */
+function openUnlockDialog() {
+  if (!state.config?.locked) {
+    fillSettings();
+    openDialog('#dlg-settings');
+    return;
+  }
+  $('#unlock-pass').value = '';
+  $('#unlock-error').hidden = true;
+  $('#dlg-unlock').showModal();
+  setTimeout(() => $('#unlock-pass').focus(), 30);
+}
+
 function fillSettings() {
   const cfg = state.config || {};
+  const locked = Boolean(cfg.locked);
   $('#cfg-base').value = cfg.base_url || '';
   $('#cfg-model').value = cfg.model || '';
   $('#cfg-tokens').value = cfg.max_tokens ?? '';
   $('#cfg-temp').value = cfg.temperature ?? '';
   $('#cfg-extra').value = cfg.extra_body ? JSON.stringify(cfg.extra_body, null, 2) : '';
   $('#cfg-key').value = '';
-  $('#cfg-key').placeholder = cfg.has_key ? `${cfg.api_key_masked}（已保存，留空不修改）` : 'sk-...';
+  $('#cfg-pass').value = '';
+  $('#cfg-key').placeholder = cfg.has_key
+    ? `${cfg.api_key_masked}（已保存，留空不修改）`
+    : locked
+      ? '已加密，先输入主密码解锁'
+      : 'sk-...';
   const providerLabel = state.presets[cfg.provider]?.label || cfg.provider || '自定义';
   $('#cfg-state').textContent = cfg.has_key
-    ? `已配置：${providerLabel} · ${cfg.model} · 来源 ${cfg.source === 'file' ? '本机配置文件' : cfg.source}`
-    : '未配置 API Key，当前使用 demo 示例数据';
+    ? `已配置：${providerLabel} · ${cfg.model} · 来源 ${cfg.source === 'file' ? '本机配置文件' : cfg.source}${cfg.encrypted ? ' · 已加密' : ''}`
+    : locked
+      ? 'API Key 已加密，等待解锁'
+      : '未配置 API Key，当前使用 demo 示例数据';
+
+  const lockState = $('#cfg-lock-state');
+  if (locked) lockState.textContent = '输入主密码后点「解密」';
+  else if (cfg.has_key) {
+    lockState.textContent = cfg.encrypted
+      ? 'API Key 只以密文形式保存在本机'
+      : '当前 Key 仍是明文存储，建议设置主密码后重新保存';
+  } else {
+    lockState.textContent = '保存 Key 时需要设置主密码（至少 6 位）';
+  }
+  $('#btn-unlock').hidden = !locked;
+
   $('#settings-error').hidden = true;
   $('#settings-ok').hidden = true;
   $$('.preset').forEach((b) => b.classList.toggle('active', b.dataset.preset === cfg.provider));
@@ -873,6 +958,12 @@ function fillSettings() {
 function applyBadge() {
   const badge = $('#model-badge');
   const cfg = state.config || {};
+  if (cfg.locked) {
+    badge.textContent = '🔒 已加密（待解锁）';
+    badge.className = 'badge demo clickable';
+    badge.title = 'API Key 已加密，点击输入主密码解密';
+    return;
+  }
   if (cfg.ready) {
     badge.textContent = cfg.model;
     badge.className = 'badge live';
@@ -1185,7 +1276,13 @@ function bindEvents() {
     const chip = ev.target.closest('.concept-chip');
     if (!chip) return;
     switchPaneIfNarrow('paper');
-    locateTerm(chip.dataset.term || '');
+    let terms = [];
+    try {
+      terms = JSON.parse(chip.dataset.terms || '[]');
+    } catch {
+      terms = [];
+    }
+    locateTerm(terms.length ? terms : [chip.dataset.term || '']);
   };
 
   // 导出报告
@@ -1236,6 +1333,7 @@ function bindEvents() {
       max_tokens: $('#cfg-tokens').value,
       temperature: $('#cfg-temp').value,
       extra_body: $('#cfg-extra').value.trim(),
+      passphrase: $('#cfg-pass').value,
     };
     const ok = $('#settings-ok');
     const err = $('#settings-error');
@@ -1252,7 +1350,9 @@ function bindEvents() {
       fillSettings();
       ok.textContent = res.config.ready
         ? `已保存：${res.config.model}，现在开始用真实模型精读。`
-        : '已保存。注意：还没有 API Key，仍是 demo 模式。';
+        : res.config.locked
+          ? '已保存。API Key 已加密，输入主密码点「解锁」后即可使用。'
+          : '已保存。注意：还没有 API Key，仍是 demo 模式。';
       ok.hidden = false;
       toast('配置已保存');
     } catch (e) {
@@ -1263,6 +1363,10 @@ function bindEvents() {
   };
 
   $('#btn-test').onclick = async () => {
+    if (state.config?.locked) {
+      toast('API Key 已加密，先输入主密码点「解锁」');
+      return;
+    }
     const btn = $('#btn-test');
     btn.disabled = true;
     btn.textContent = '测试中…';
@@ -1290,6 +1394,56 @@ function bindEvents() {
     } finally {
       btn.disabled = false;
       btn.textContent = '测试连接';
+    }
+  };
+
+  $('#btn-unlock').onclick = async () => {
+    const passphrase = $('#cfg-pass').value;
+    if (!passphrase.trim()) {
+      toast('先输入主密码');
+      return;
+    }
+    try {
+      await unlockWithPassphrase(passphrase);
+      toast('已解密，可以开始精读了');
+    } catch (err) {
+      const box = $('#settings-error');
+      box.textContent = err.message || '解密失败';
+      box.hidden = false;
+    }
+  };
+
+  // 顶栏锁徽标 → 独立的解密对话框；未加密时点击打开模型设置
+  $('#model-badge').onclick = () => {
+    if (state.config?.locked) openUnlockDialog();
+    else {
+      fillSettings();
+      openDialog('#dlg-settings');
+    }
+  };
+
+  $('#btn-unlock-submit').onclick = async () => {
+    const passphrase = $('#unlock-pass').value;
+    const box = $('#unlock-error');
+    if (!passphrase.trim()) {
+      box.textContent = '请输入主密码';
+      box.hidden = false;
+      return;
+    }
+    try {
+      await unlockWithPassphrase(passphrase);
+      $('#dlg-unlock').close();
+      toast('已解密，可以开始精读了');
+    } catch (err) {
+      box.textContent = err.message || '解密失败';
+      box.hidden = false;
+    }
+  };
+  $('#btn-unlock-close').onclick = () => $('#dlg-unlock').close();
+  $('#unlock-pass').onkeydown = (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      $('#btn-unlock-submit').click();
     }
   };
 

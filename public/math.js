@@ -36,6 +36,88 @@ function looksLikeMoney(tex) {
   return /^[\d\s.,]+$/.test(tex);
 }
 
+const escapeHtml = (s) =>
+  String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+/**
+ * 模型偶尔会写出缺参数的上下标（如 `Q^=`、`\breve Q^ Z`），KaTeX 会整块报错。
+ * 这里只做保守修复：^ / _ 后面不是 {、字母数字或反斜杠命令时，补一个空组。
+ */
+export function repairLatex(tex) {
+  return String(tex || '').replace(/([\^_])(?![{])(?=\s|$|[=,;:)\]}])/g, '$1{}');
+}
+
+/** 按顶层换行 / \\ 拆分独立公式，避免一处语法错误拖垮整块 */
+export function splitTopLevel(tex) {
+  const parts = [];
+  let buf = '';
+  let depth = 0;
+  let envDepth = 0;
+  for (let i = 0; i < tex.length; i += 1) {
+    const ch = tex[i];
+    if (ch === '\\') {
+      const rest = tex.slice(i);
+      if (rest.startsWith('\\begin{')) envDepth += 1;
+      else if (rest.startsWith('\\end{')) envDepth = Math.max(0, envDepth - 1);
+      if (rest.startsWith('\\\\') && depth === 0 && envDepth === 0) {
+        parts.push(buf);
+        buf = '';
+        i += 1;
+        continue;
+      }
+      buf += ch;
+      continue;
+    }
+    if (ch === '{' || ch === '[' || ch === '(') depth += 1;
+    else if (ch === '}' || ch === ']' || ch === ')') depth = Math.max(0, depth - 1);
+    if (ch === '\n' && depth === 0 && envDepth === 0) {
+      parts.push(buf);
+      buf = '';
+      continue;
+    }
+    buf += ch;
+  }
+  parts.push(buf);
+  return parts.map((p) => p.trim()).filter(Boolean);
+}
+
+/**
+ * 渲染一个公式片段：原样 → 保守修复 → （独立公式）拆成多段逐个渲染。
+ * 只要有一部分成功，就返回拼接后的 HTML；全部失败返回 null（调用方保留原文）。
+ */
+export function renderMathPart(katex, tex, displayMode) {
+  const renderOne = (value) => {
+    try {
+      return katex.renderToString(value, {
+        displayMode,
+        throwOnError: true,
+        strict: 'ignore',
+        output: 'html',
+      });
+    } catch {
+      return null;
+    }
+  };
+
+  const direct = renderOne(tex);
+  if (direct) return direct;
+  const repaired = repairLatex(tex);
+  if (repaired !== tex) {
+    const fixed = renderOne(repaired);
+    if (fixed) return fixed;
+  }
+
+  if (!displayMode) return null;
+  const chunks = splitTopLevel(tex);
+  if (chunks.length < 2) return null;
+  const rendered = chunks.map((chunk) => {
+    const html = renderOne(chunk) || renderOne(repairLatex(chunk));
+    return html || `<span class="math-raw">${escapeHtml(chunk)}</span>`;
+  });
+  const hasRendered = rendered.some((html) => !html.startsWith('<span class="math-raw">'));
+  return hasRendered ? rendered.join('<br>') : null;
+}
+
 /** 把一段文本切成「普通文本 / 公式」片段 */
 export function splitMath(text) {
   const parts = [];
@@ -104,15 +186,8 @@ export async function renderMathIn(root) {
         frag.appendChild(document.createTextNode(part.text));
         continue;
       }
-      let html = '';
-      try {
-        html = katex.renderToString(part.math, {
-          displayMode: part.display,
-          throwOnError: true,
-          strict: 'ignore',
-          output: 'html',
-        });
-      } catch {
+      const html = renderMathPart(katex, part.math, part.display);
+      if (!html) {
         frag.appendChild(document.createTextNode(part.raw));
         continue;
       }

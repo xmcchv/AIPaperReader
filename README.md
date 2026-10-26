@@ -58,6 +58,17 @@ $env:PAPERLENS_API_KEY='sk-xxx'; node server/index.mjs
 
 可选：`PAPERLENS_BASE_URL`、`PAPERLENS_MODEL`、`PAPERLENS_PROVIDER`、`PAPERLENS_MAX_TOKENS`、`PAPERLENS_TEMPERATURE`。没设时用 DeepSeek 预设的地址与模型。配置文件默认在 `~/.paperlens/config.json`，可用 `PAPERLENS_CONFIG` 指定文件、`PAPERLENS_DATA_DIR` 指定目录；旧版本的 `data/config.json` 会在首次启动时自动迁移过去。
 
+### API Key 存在哪里、如何加密
+
+- **默认位置**：`~/.paperlens/config.json`（Windows：`C:\Users\<用户名>\.paperlens\config.json`），第一次保存配置时自动创建。
+- **加密存储**：首次保存 API Key 时需要设置主密码（至少 6 位）。配置文件里只保存 `api_key_enc`（scrypt 派生密钥 + AES-256-GCM 密文），**不保存明文 Key**；主密码本身也不会落盘。
+- **重启后解密**：服务重启后内存里没有明文。点顶栏的「🔒 已加密（待解锁）」徽标会弹出解密框，或在「模型设置」主密码旁点「解密」；也可以启动时设置 `PAPERLENS_PASSPHRASE=...`（不落盘，适合自动化）。
+- **忘记主密码**：只能「清除已保存的 Key」后重新设置，密文无法恢复。
+- 旧版本仓库内的 `data/config.json` 会在启动时自动迁移到新位置；如果里面还是明文 Key，打开设置、填写主密码后点「保存」即可转成密文。
+- **想换位置**：`PAPERLENS_CONFIG=/path/to/config.json` 指定配置文件；`PAPERLENS_DATA_DIR=/path/to/dir` 指定目录。
+- **不想落盘**：用 `PAPERLENS_API_KEY=sk-xxx`（配合 `PAPERLENS_BASE_URL` / `PAPERLENS_MODEL`）从环境变量注入。
+- 「模型设置」底部会显示当前实际读取的路径；仓库只保留不含 Key 的 `data/config.example.json`，`.gitignore` 已忽略真实配置文件。
+
 ## 它做了什么
 
 **载入论文**（三种方式，入口都在原文栏右上角的小按钮里）
@@ -90,7 +101,7 @@ $env:PAPERLENS_API_KEY='sk-xxx'; node server/index.mjs
 | BERT（双栏） | 16/16 页 | p50 37%、p90 37%（= 栏宽） | 0 |
 
 **AI 精读**（流式）
-固定 7 个小节，边生成边渲染成卡片：一句话结论 / 要解决的问题 / 核心方法 / 关键创新 / 实验与结论 / 局限与可延伸 / 精读要点。生成中可随时点「停止」。渲染是增量式的：每个小节一张卡片，流式时只重画内容变化的那一张，不会整块闪动。公式用 KaTeX 渲染（`$...$` 行内、`$$...$$` 独立，按需从 CDN 加载，离线时保留 LaTeX 原文）。思考型模型（DeepSeek 等）的思维链走 `reasoning_content`，单独接出来只在状态栏显示进度，不会混进正文。
+固定 7 个小节，边生成边渲染成卡片：一句话结论 / 要解决的问题 / 核心方法 / 关键创新 / 实验与结论 / 局限与可延伸 / 精读要点。生成中可随时点「停止」。渲染是增量式的：每个小节一张卡片，流式时只重画内容变化的那一张，不会整块闪动。公式用 KaTeX 渲染（`$...$` 行内、`$$...$$` 独立，按需从 CDN 加载，离线时保留 LaTeX 原文）；模型写出的缺参数上下标（如 `Q^=`）会自动补空组，多行公式逐段渲染，个别坏公式只保留局部原文，不会拖垮整块。思考型模型（DeepSeek 等）的思维链走 `reasoning_content`，单独接出来只在状态栏显示进度，不会混进正文。
 
 **结构化抽取**（第二次调用）
 精读结束后自动再请求一次，让模型输出严格 JSON：`tags` / `concepts` / `claims` / `diagram`。服务端会做容错归一化（丢悬空边、补默认 kind、限制节点数），坏 JSON 会自动重试一次。
@@ -110,7 +121,7 @@ $env:PAPERLENS_API_KEY='sk-xxx'; node server/index.mjs
 - 滚轮缩放、拖背景平移、拖节点重排、点节点看 detail 并高亮上下游、一键重排/适应窗口/导出 SVG
 
 **追问**
-在原文里选中任意片段 → 浮出「问 AI」→ 带着该片段和已有精读笔记追问，流式回答。点「核心概念」卡片会在原文里定位并高亮该术语。
+在原文里选中任意片段 → 浮出「问 AI」→ 带着该片段和已有精读笔记追问，流式回答。点「核心概念」卡片会在原文里定位并高亮该术语：优先用模型给出的英文原文检索词（`terms`，如 `state space layer` / `SSM`），找不到才退回中文名；空格与连字符视为可选分隔，`state space` 与 `state-space` 都能命中。
 
 ## 目录结构
 

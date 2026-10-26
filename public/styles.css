@@ -195,6 +195,21 @@ code {
   background: color-mix(in srgb, var(--warn) 12%, transparent);
 }
 
+/* 徽标是 button（可点击解锁），去掉浏览器默认按钮外观 */
+button.badge {
+  font-family: inherit;
+  background: transparent;
+  cursor: default;
+}
+
+button.badge.clickable {
+  cursor: pointer;
+}
+
+button.badge.clickable:hover {
+  filter: brightness(1.12);
+}
+
 /* ---------------------------------- 按钮 ---------------------------------- */
 
 .btn {
@@ -501,6 +516,14 @@ code {
 
 .reading-body .math-inline {
   white-space: nowrap;
+}
+
+/* 修复失败时保留的 LaTeX 原文（只在局部出现，不拖垮整块公式） */
+.reading-body .math-raw {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  color: var(--warn);
+  white-space: pre-wrap;
 }
 
 .reading-error {
@@ -925,6 +948,22 @@ code {
 .field-row {
   display: flex;
   gap: 10px;
+}
+
+/* 主密码输入框旁的内联操作按钮 */
+.field-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-inline input {
+  flex: 1;
+  min-width: 0;
+}
+
+.dialog.dialog-narrow {
+  width: min(420px, calc(100vw - 32px));
 }
 
 .preset-row {

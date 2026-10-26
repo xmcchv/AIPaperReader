@@ -146,7 +146,8 @@ export function renderBlocks(lines) {
   };
   const flushPara = () => {
     if (!para.length) return;
-    out.push(`<p>${para.map(inlineMd).join('')}</p>`);
+    // 保留行间换行：普通段落渲染时会被折叠成空格，多行公式（$$...$$）则需要它来分隔
+    out.push(`<p>${para.map(inlineMd).join('\n')}</p>`);
     para = [];
   };
 
