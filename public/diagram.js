@@ -14,6 +14,20 @@ const KIND_COLOR = {
 };
 const KIND_LABEL = { input: 'INPUT', process: 'PROCESS', data: 'DATA', output: 'OUTPUT' };
 
+// 导出报告/打印时固定用浅色调色板，不跟随界面深色主题
+const LIGHT_EXPORT_VARS = {
+  '--panel': '#ffffff',
+  '--panel-2': '#f6f8fc',
+  '--line': '#d7dde8',
+  '--text': '#1f2430',
+  '--text-dim': '#3d4454',
+  '--muted': '#737d90',
+  '--accent': '#2f6fdb',
+  '--accent-2': '#5b8def',
+  '--ok': '#1f8a5b',
+  '--warn': '#b45309',
+};
+
 const TITLE_SIZE = 12.5;
 const DETAIL_SIZE = 10.5;
 const PAD_X = 13;
@@ -475,13 +489,16 @@ export function createDiagram(host) {
     });
   }
 
-  function exportSvg() {
+  function exportSvg({ theme = 'auto' } = {}) {
     if (!svg || !layout.nodes.length) return null;
     const box = bounds();
+    const light = theme === 'light';
     const cssVars = ['--panel', '--panel-2', '--line', '--text', '--text-dim', '--muted', '--accent', '--accent-2', '--ok', '--warn'];
     const computed = getComputedStyle(document.documentElement);
-    const varCss = cssVars.map((v) => `${v}: ${computed.getPropertyValue(v).trim()};`).join(' ');
-    const bg = computed.getPropertyValue('--panel').trim() || '#fff';
+    const varCss = cssVars
+      .map((v) => `${v}: ${(light ? LIGHT_EXPORT_VARS[v] : computed.getPropertyValue(v).trim()) || LIGHT_EXPORT_VARS[v]};`)
+      .join(' ');
+    const bg = light ? LIGHT_EXPORT_VARS['--panel'] : computed.getPropertyValue('--panel').trim() || '#fff';
 
     const out = document.createElementNS(SVG_NS, 'svg');
     out.setAttribute('xmlns', SVG_NS);

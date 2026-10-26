@@ -85,6 +85,7 @@
           <span id="reading-status" class="pane-meta"></span>
           <div class="pane-tools">
             <button id="btn-copy-reading" class="btn tiny" type="button">复制</button>
+            <button id="btn-export-report" class="btn tiny" type="button" title="把精读、图解与追问导出为 PDF 报告">导出报告</button>
             <button id="btn-rerun" class="btn tiny" type="button">重跑</button>
           </div>
         </div>
@@ -241,6 +242,48 @@
           <button type="button" class="btn ghost" id="btn-test">测试连接</button>
           <button type="button" class="btn primary" id="btn-save-config">保存</button>
           <button type="button" class="btn ghost" id="btn-close-settings">关闭</button>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- 导出报告 -->
+    <dialog id="dlg-export" class="dialog">
+      <div class="dialog-body">
+        <h3>导出精读报告</h3>
+        <p class="hint">
+          生成一份 A4 排版的报告：打印对话框里选「另存为 PDF」，也可以直接下载 HTML 存档。图解保持矢量，公式用 KaTeX 渲染。
+        </p>
+
+        <div class="export-block">
+          <span class="export-title">包含内容</span>
+          <div class="export-checks">
+            <label><input type="checkbox" data-export="reading" checked /> 精读正文</label>
+            <label><input type="checkbox" data-export="structure" checked /> 核心概念与论断</label>
+            <label><input type="checkbox" data-export="diagram" checked /> 方法链路图</label>
+            <label><input type="checkbox" data-export="ask" checked /> 追问记录</label>
+            <label><input type="checkbox" data-export="appendix" /> 原文节选</label>
+          </div>
+        </div>
+
+        <div class="export-block">
+          <span class="export-title">追问范围</span>
+          <div class="segmented" id="export-ask-range">
+            <button type="button" class="seg active" data-range="all">全部</button>
+            <button type="button" class="seg" data-range="5">最近 5 条</button>
+            <button type="button" class="seg" data-range="none">不含追问</button>
+          </div>
+        </div>
+
+        <p class="hint" id="export-note">
+          导出前会调用一次模型生成「执行摘要」和追问要点；demo 模式或调用失败时自动改用本地归纳，不会挡住导出。
+        </p>
+        <p class="hint" id="export-status" hidden></p>
+        <p class="dialog-error" id="export-error" hidden></p>
+
+        <div class="dialog-actions">
+          <button type="button" class="btn ghost" id="btn-export-close">取消</button>
+          <button type="button" class="btn ghost" id="btn-export-html">下载 HTML</button>
+          <button type="button" class="btn primary" id="btn-export-print">打印 / 保存为 PDF</button>
         </div>
       </div>
     </dialog>

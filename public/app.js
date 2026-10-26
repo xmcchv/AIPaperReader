@@ -1,6 +1,7 @@
 import { createDiagram } from './diagram.js';
 import { createPdfView } from './pdfview.js';
 import { renderMathIn } from './math.js';
+import { getReportHtml, printReport, qaPairs, reportFilename, saveReportHtml } from './report.js';
 import { escapeHtml, isSectionTitle, parseReading, renderBlocks, splitParagraphs } from './text.js';
 
 /* --------------------------------- 基础工具 -------------------------------- */
@@ -31,6 +32,7 @@ const state = {
   abort: null,
   aborted: false,
   selection: '',
+  askThread: [],
   hasPdf: false,
   pdfPages: 0,
   paperView: 'text',
@@ -150,6 +152,7 @@ function setPaper(paper, { keepReading = false } = {}) {
   switchPaperView(state.hasPdf ? 'pdf' : 'text');
   if (!keepReading) {
     clearReading();
+    clearAskThread(); // 换论文后旧追问不能带进新论文的报告
     renderStructure(null); // 同时清空概念卡与图解
   }
   persistPaper();
@@ -531,6 +534,7 @@ async function loadStructure() {
 
 /* ---------------------------------- 追问 ---------------------------------- */
 
+/** 追问对话同时存进 state.askThread，导出报告时要用（DOM 只是渲染结果） */
 function pushAsk(role, text, quote = '') {
   const thread = $('#ask-thread');
   const div = document.createElement('div');
@@ -546,7 +550,15 @@ function pushAsk(role, text, quote = '') {
   div.appendChild(content);
   thread.appendChild(div);
   thread.scrollTop = thread.scrollHeight;
-  return content;
+  const entry = { role, text: String(text || ''), quote: String(quote || '') };
+  state.askThread.push(entry);
+  return { el: content, entry };
+}
+
+function clearAskThread() {
+  $('#ask-thread').innerHTML = '';
+  state.askThread = [];
+  state.selection = '';
 }
 
 /** 把一段原文交给追问区（PDF 段落卡片、选中文字都走这里） */
@@ -566,7 +578,7 @@ async function ask(question, selection = '') {
     return;
   }
   pushAsk('user', question, selection);
-  const target = pushAsk('assistant', '…');
+  const { el: target, entry: answerEntry } = pushAsk('assistant', '…');
   $('#ask-input').value = '';
   autoGrow($('#ask-input'));
 
@@ -578,16 +590,153 @@ async function ask(question, selection = '') {
       question,
     }, (evt) => {
       if (evt.type === 'delta') {
-        target.textContent = target.textContent === '…' || target.textContent === '思考中…' ? evt.text : target.textContent + evt.text;
+        const pending = answerEntry.text === '…' || answerEntry.text === '思考中…';
+        answerEntry.text = pending ? evt.text : answerEntry.text + evt.text;
+        target.textContent = answerEntry.text;
         $('#ask-thread').scrollTop = $('#ask-thread').scrollHeight;
       } else if (evt.type === 'thinking') {
-        if (target.textContent === '…') target.textContent = '思考中…';
+        if (answerEntry.text === '…') {
+          answerEntry.text = '思考中…';
+          target.textContent = answerEntry.text;
+        }
       } else if (evt.type === 'error') {
-        target.textContent = `出错了：${evt.message}`;
+        answerEntry.text = `出错了：${evt.message}`;
+        answerEntry.error = true;
+        target.textContent = answerEntry.text;
       }
     });
   } catch (err) {
-    target.textContent = `出错了：${err.message}`;
+    answerEntry.text = `出错了：${err.message}`;
+    answerEntry.error = true;
+    target.textContent = answerEntry.text;
+  }
+}
+
+/* -------------------------------- 导出报告 -------------------------------- */
+
+const exportState = { busy: false };
+
+function timestamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function openExportDialog() {
+  if (!state.readingText.trim()) {
+    toast('还没有精读结果，先点「开始精读」');
+    return;
+  }
+  $('#export-error').hidden = true;
+  $('#export-status').hidden = true;
+  $('#dlg-export').showModal();
+}
+
+function readExportOptions() {
+  const flags = {};
+  $$('#dlg-export [data-export]').forEach((el) => {
+    flags[el.dataset.export] = el.checked;
+  });
+  const range = $('#export-ask-range .seg.active')?.dataset.range || 'all';
+  let askLimit = 0;
+  if (range === 'none') flags.ask = false;
+  else if (range !== 'all') askLimit = Number(range) || 0;
+  return { ...flags, askLimit };
+}
+
+/** 按导出范围截断追问，并还原成 role/text 结构交给摘要接口 */
+function exportAskThread(limit) {
+  const pairs = qaPairs(state.askThread);
+  const picked = limit > 0 ? pairs.slice(-limit) : pairs;
+  const out = [];
+  for (const pair of picked) {
+    out.push({ role: 'user', text: pair.question, quote: pair.quote });
+    out.push({ role: 'assistant', text: pair.answer });
+  }
+  return out;
+}
+
+async function runExport(mode) {
+  if (exportState.busy) return;
+  const options = readExportOptions();
+  const askThread = options.ask ? exportAskThread(options.askLimit) : [];
+  const status = $('#export-status');
+  const error = $('#export-error');
+  const printBtn = $('#btn-export-print');
+  const htmlBtn = $('#btn-export-html');
+
+  exportState.busy = true;
+  printBtn.disabled = true;
+  htmlBtn.disabled = true;
+  error.hidden = true;
+  status.hidden = false;
+  status.textContent = '正在生成执行摘要…';
+
+  try {
+    let summary = null;
+    if (state.readingText.trim()) {
+      const res = await postJson('/api/export/summary', {
+        paper: state.paper,
+        reading: state.readingText,
+        askThread,
+      });
+      if (!res || res.ok === false) {
+        const message = res?.error || '摘要生成失败';
+        if (message.includes('未知接口')) {
+          throw new Error('服务端进程还是旧版本：请重启 node server/index.mjs 后再导出');
+        }
+        throw new Error(message);
+      }
+      summary = {
+        ...(res.data || {}),
+        demo: Boolean(res.demo),
+        fallback: Boolean(res.fallback),
+        error: res.error || '',
+      };
+    }
+
+    const diagramResult = options.diagram ? diagram.exportSvg({ theme: 'light' }) : null;
+    const data = {
+      paper: state.paper,
+      reading: state.readingText,
+      structure: state.structure,
+      askThread,
+      summary,
+      diagramSvg: diagramResult?.svg || '',
+      options: {
+        reading: options.reading,
+        structure: options.structure,
+        diagram: Boolean(diagramResult),
+        ask: options.ask,
+        appendix: options.appendix,
+        askLimit: 0, // 已经在 exportAskThread 里截断
+      },
+      meta: {
+        source: state.paper.source,
+        model: state.config?.model || '',
+        generatedAt: timestamp(),
+      },
+    };
+
+    if (mode === 'print') {
+      status.textContent = '正在准备打印…';
+      await printReport(data);
+      $('#dlg-export').close();
+      toast('已打开打印预览，在打印对话框里选「另存为 PDF」', 4200);
+    } else {
+      status.textContent = '正在生成 HTML…';
+      const html = await getReportHtml(data);
+      saveReportHtml(html, reportFilename(data.structure?.title || state.paper.title));
+      toast('已下载报告 HTML');
+    }
+  } catch (err) {
+    error.textContent = err.message || '导出失败';
+    error.hidden = false;
+  } finally {
+    exportState.busy = false;
+    printBtn.disabled = false;
+    htmlBtn.disabled = false;
+    status.hidden = true;
   }
 }
 
@@ -1000,10 +1149,7 @@ function bindEvents() {
       $('#ask-form').requestSubmit();
     }
   };
-  $('#btn-ask-clear').onclick = () => {
-    $('#ask-thread').innerHTML = '';
-    state.selection = '';
-  };
+  $('#btn-ask-clear').onclick = clearAskThread;
 
   // 选中原文 → 浮动「问 AI」
   const selTool = $('#sel-tool');
@@ -1040,6 +1186,17 @@ function bindEvents() {
     if (!chip) return;
     switchPaneIfNarrow('paper');
     locateTerm(chip.dataset.term || '');
+  };
+
+  // 导出报告
+  $('#btn-export-report').onclick = openExportDialog;
+  $('#btn-export-print').onclick = () => runExport('print');
+  $('#btn-export-html').onclick = () => runExport('html');
+  $('#btn-export-close').onclick = () => $('#dlg-export').close();
+  $('#export-ask-range').onclick = (ev) => {
+    const btn = ev.target.closest('.seg');
+    if (!btn) return;
+    $$('#export-ask-range .seg').forEach((b) => b.classList.toggle('active', b === btn));
   };
 
   // 精读复制

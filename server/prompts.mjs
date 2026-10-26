@@ -133,3 +133,47 @@ export function askMessages(paper, { title = '', selection = '', reading = '', q
     { role: 'user', content: `${context}\n\n用户问题：${question}` },
   ];
 }
+
+/**
+ * 导出报告用的「一页速览 + 追问总结」。
+ * 一次调用同时产出两样东西：报告开头的执行摘要，以及追问区顶部的要点归纳。
+ */
+export function summaryMessages(paper, { title = '', reading = '', askThread = [] } = {}) {
+  const qa = (Array.isArray(askThread) ? askThread : [])
+    .filter((m) => m && String(m.text || '').trim() && String(m.text).trim() !== '…')
+    .slice(-12)
+    .map((m) => `${m.role === 'user' ? '用户' : 'AI'}：${String(m.text).trim().slice(0, 700)}`)
+    .join('\n');
+
+  const user = `下面是一篇论文的精读笔记${qa ? '和追问记录' : ''}。请输出**严格 JSON**（第一个字符就是 {，不要 markdown 代码块，不要注释）：
+
+{
+  "digest": "一页执行摘要：5-7 行 markdown 列表，每行一句，覆盖 研究问题 / 方法核心 / 关键结果 / 局限 / 可延伸方向",
+  "qa_highlights": [
+    { "question": "追问的问题（可压缩成一句话）", "takeaway": "回答的核心结论，一句话" }
+  ]
+}
+
+约束：
+- digest 用中文，总长不超过 260 字；只依据给定内容，不要编造数字或结论。
+- qa_highlights 覆盖所有有实质回答的追问，最多 8 条；没有追问就给空数组 []。
+- 每条 takeaway 不超过 60 字，直接给结论，不要写"作者认为"。
+- 公式用 LaTeX：行内 $...$，独立公式 $$...$$。
+
+论文标题：${title || '（未提供）'}
+
+精读笔记：
+"""
+${String(reading || '').slice(0, 12000)}
+"""
+${qa ? `\n追问记录：\n"""\n${qa}\n"""` : ''}
+
+论文正文节选（用于核对事实）：
+"""
+${trimPaper(paper, 6000)}
+"""`;
+  return [
+    { role: 'system', content: '你是一个严谨的论文报告编辑，只输出合法 JSON，绝不输出 JSON 之外的任何字符。' },
+    { role: 'user', content: user },
+  ];
+}

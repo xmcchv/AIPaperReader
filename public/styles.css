@@ -1021,6 +1021,39 @@ code {
   justify-content: flex-end;
 }
 
+/* 导出报告对话框 */
+.export-block {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.export-title {
+  font-size: 11.5px;
+  color: var(--muted);
+  letter-spacing: 0.3px;
+}
+
+.export-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+
+.export-checks label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.export-checks input {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 .dialog-foot {
   display: flex;
   justify-content: flex-start;

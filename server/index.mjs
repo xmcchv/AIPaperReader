@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 import { loadConfig, publicConfig, saveConfig, PRESETS } from './config.mjs';
 import { streamChat, completeChat, extractJson, testConnection, LlmError } from './llm.mjs';
-import { readingMessages, structureMessages, askMessages } from './prompts.mjs';
+import { readingMessages, structureMessages, askMessages, summaryMessages } from './prompts.mjs';
 import { fetchArxivPaper } from './paper.mjs';
 import { SAMPLE_PAPER, DEMO_READING, DEMO_STRUCTURE, DEMO_ASK } from './samples.mjs';
 
@@ -254,6 +254,111 @@ function normalizeStructure(data) {
   return out;
 }
 
+/** 导出报告前的一次性总结：一页执行摘要 + 追问要点（模型不可用时退回本地摘要） */
+async function handleExportSummary(req, res) {
+  const body = await readBody(req);
+  const paper = paperOf(body);
+  const reading = String(body.reading || '').trim();
+  const askThread = Array.isArray(body.askThread) ? body.askThread : [];
+  if (!reading) throw new HttpError(400, '还没有精读结果，先生成精读再导出');
+
+  const cfg = loadConfig();
+  if (!cfg.api_key || body.demo === true) {
+    await sleep(120);
+    return sendJson(res, 200, { ok: true, demo: true, data: localSummary(reading, askThread) });
+  }
+
+  try {
+    const messages = summaryMessages(paper, { title: paper.title, reading, askThread });
+    let failure = { message: '摘要生成失败' };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const { content } = await completeChat(cfg, messages, {
+          maxTokens: Math.min(cfg.max_tokens || 2048, 2400),
+          temperature: 0.3,
+        });
+        const data = extractJson(content);
+        if (data && typeof data === 'object') {
+          const summary = normalizeSummary(data);
+          if (summary.digest) return sendJson(res, 200, { ok: true, data: summary });
+        }
+        failure = { message: '模型没有返回可解析的摘要 JSON' };
+      } catch (err) {
+        failure = { message: err.message || '摘要生成失败' };
+      }
+    }
+    // 总结失败不挡住导出：用本地摘要兜底，前端会提示
+    return sendJson(res, 200, {
+      ok: true,
+      fallback: true,
+      error: failure.message,
+      data: localSummary(reading, askThread),
+    });
+  } catch (err) {
+    return sendJson(res, 200, {
+      ok: true,
+      fallback: true,
+      error: err.message || '摘要生成失败',
+      data: localSummary(reading, askThread),
+    });
+  }
+}
+
+function normalizeSummary(data) {
+  const qa = Array.isArray(data?.qa_highlights) ? data.qa_highlights : [];
+  return {
+    digest: String(data?.digest || '').trim(),
+    qa_highlights: qa
+      .filter((x) => x && (x.question || x.takeaway))
+      .map((x) => ({ question: String(x.question || '').trim(), takeaway: String(x.takeaway || '').trim() }))
+      .slice(0, 8),
+  };
+}
+
+/** 本地摘要：取每个小节的第一个非空行 + 每条追问的回答首句 */
+function localSummary(reading, askThread) {
+  const sections = [];
+  let cur = null;
+  for (const line of String(reading || '').split('\n')) {
+    const m = line.match(/^#{1,4}\s+(.+?)\s*$/);
+    if (m) {
+      cur = { title: m[1].replace(/^[一二三四五六七]、\s*/, ''), lines: [] };
+      sections.push(cur);
+    } else if (cur) {
+      cur.lines.push(line);
+    }
+  }
+
+  const digestLines = [];
+  for (const section of sections) {
+    const first = section.lines.map((l) => l.trim()).find(Boolean);
+    if (!first) continue;
+    const clean = first.replace(/^[-*•]\s*/, '').replace(/[。.!?]\s*$/, '');
+    digestLines.push(`- ${section.title}：${clean.slice(0, 80)}`);
+  }
+  const digest = digestLines.join('\n') || String(reading || '').slice(0, 200);
+
+  const qa = [];
+  const list = Array.isArray(askThread) ? askThread : [];
+  for (let i = 0; i < list.length; i += 1) {
+    const item = list[i];
+    if (!item || item.role !== 'user' || !String(item.text || '').trim()) continue;
+    const answer = list
+      .slice(i + 1)
+      .find((m) => m && m.role === 'assistant' && String(m.text || '').trim() && String(m.text).trim() !== '…');
+    if (!answer) continue;
+    const firstSentence =
+      String(answer.text)
+        .trim()
+        .split(/[\n。.!?]/)
+        .map((s) => s.trim())
+        .find(Boolean) || '';
+    qa.push({ question: String(item.text).trim().slice(0, 120), takeaway: firstSentence.slice(0, 80) });
+  }
+
+  return { digest, qa_highlights: qa.slice(-8) };
+}
+
 async function handleAsk(req, res) {
   const body = await readBody(req);
   const paper = paperOf(body);
@@ -382,6 +487,8 @@ const server = http.createServer(async (req, res) => {
           return await handleStructure(req, res);
         case 'POST /api/ask':
           return await handleAsk(req, res);
+        case 'POST /api/export/summary':
+          return await handleExportSummary(req, res);
         case 'POST /api/paper/fetch':
           return await handleFetchPaper(req, res);
         case 'GET /api/sample':

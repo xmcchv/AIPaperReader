@@ -1,0 +1,456 @@
+/*
+ * 导出报告的独立样式（内联进报告 HTML，不依赖主界面样式）。
+ * 面向 A4 打印：浅色、可读、尽量避免卡片/表格跨页断裂。
+ */
+
+:root {
+  --ink: #1f2430;
+  --ink-dim: #3d4454;
+  --muted: #737d90;
+  --line: #d7dde8;
+  --line-soft: #e9edf4;
+  --accent: #2f6fdb;
+  --accent-soft: #eef4ff;
+  --ok: #1f8a5b;
+  --warn: #b45309;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #f2f4f8;
+  color: var(--ink);
+}
+
+body {
+  font: 14px/1.72 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.report {
+  max-width: 780px;
+  margin: 28px auto 64px;
+  padding: 44px 52px 56px;
+  background: #fff;
+  border-radius: 6px;
+  box-shadow: 0 10px 44px rgba(24, 38, 70, 0.1);
+}
+
+/* ------------------------------- 工具栏 ------------------------------- */
+
+.report-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+  box-shadow: 0 2px 10px rgba(24, 38, 70, 0.06);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.report-toolbar button {
+  padding: 7px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.report-toolbar button:hover {
+  filter: brightness(1.06);
+}
+
+/* -------------------------------- 封面 -------------------------------- */
+
+.cover {
+  padding-bottom: 22px;
+  border-bottom: 2px solid var(--line-soft);
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  font-size: 11.5px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.cover h1 {
+  margin: 0 0 14px;
+  font-size: 28px;
+  line-height: 1.32;
+  letter-spacing: 0.2px;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.one-liner {
+  margin: 18px 0 0;
+  padding: 12px 16px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 6px 6px 0;
+  font-size: 14.5px;
+  line-height: 1.68;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.tag {
+  padding: 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* ------------------------------- 章节 -------------------------------- */
+
+.section {
+  margin-top: 30px;
+}
+
+.section h2 {
+  margin: 0 0 14px;
+  padding-bottom: 7px;
+  border-bottom: 1.5px solid var(--line);
+  font-size: 17px;
+  letter-spacing: 0.4px;
+}
+
+.section h2 .num {
+  margin-right: 8px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.note.warn {
+  color: var(--warn);
+}
+
+/* ------------------------------- 精读卡片 ------------------------------ */
+
+.card {
+  margin: 14px 0;
+  padding: 14px 18px;
+  border: 1px solid var(--line-soft);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  background: #fafbfe;
+}
+
+.card h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--accent);
+}
+
+.card p {
+  margin: 0 0 9px;
+  color: var(--ink-dim);
+}
+
+.card p:last-child {
+  margin-bottom: 0;
+}
+
+.card ol,
+.card ul,
+.digest ol,
+.digest ul {
+  margin: 0;
+  padding-left: 22px;
+  color: var(--ink-dim);
+}
+
+.card li,
+.digest li {
+  margin-bottom: 5px;
+}
+
+.card li::marker,
+.digest li::marker {
+  color: var(--accent);
+}
+
+.card strong,
+.digest strong {
+  color: var(--ink);
+}
+
+/* ------------------------------- 概念表格 ------------------------------ */
+
+.concept-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.concept-table th,
+.concept-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  text-align: left;
+  vertical-align: top;
+}
+
+.concept-table thead th {
+  border-bottom: 1.5px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.concept-table tbody th {
+  width: 30%;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.claims {
+  margin: 18px 0 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+.claims li {
+  margin-bottom: 9px;
+  padding-left: 14px;
+  border-left: 2px solid var(--line);
+  color: var(--ink-dim);
+}
+
+.claim-label {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11.5px;
+}
+
+/* -------------------------------- 图解 -------------------------------- */
+
+.diagram-frame {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.diagram-frame svg {
+  display: block;
+  width: 100% !important;
+  height: auto !important;
+  max-width: 100%;
+}
+
+.caption {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* -------------------------------- 追问 -------------------------------- */
+
+.qa-highlights {
+  margin: 0 0 18px;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: #fafbfe;
+}
+
+.qa-highlights li {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 13px;
+  color: var(--ink-dim);
+}
+
+.qa-highlights li:last-child {
+  border-bottom: none;
+}
+
+.qa-highlights b {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.qa-item {
+  margin: 12px 0;
+  padding: 11px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+}
+
+.qa-q {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.qa-q::before {
+  content: 'Q';
+  display: inline-block;
+  margin-right: 8px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.quote {
+  margin: 6px 0 8px;
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.qa-a {
+  color: var(--ink-dim);
+}
+
+.qa-a p {
+  margin: 0 0 8px;
+}
+
+.qa-a p:last-child {
+  margin-bottom: 0;
+}
+
+.qa-a ol,
+.qa-a ul {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+
+/* -------------------------------- 附录 -------------------------------- */
+
+.appendix-text {
+  max-height: none;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: #fbfcfe;
+  font: 11.5px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ink-dim);
+}
+
+.report-footer {
+  margin-top: 40px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 11.5px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* -------------------------------- 打印 -------------------------------- */
+
+@media print {
+  @page {
+    size: A4;
+    margin: 15mm 14mm 16mm;
+  }
+
+  html,
+  body {
+    background: #fff;
+  }
+
+  .report {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .report-toolbar {
+    display: none !important;
+  }
+
+  a {
+    color: inherit;
+  }
+
+  .cover {
+    break-after: page;
+  }
+
+  .section-diagram {
+    break-before: page;
+  }
+
+  .card,
+  .qa-item,
+  .qa-highlights,
+  .qa-highlights li,
+  .concept-table tr,
+  .diagram-frame,
+  .one-liner {
+    break-inside: avoid;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    break-after: avoid;
+  }
+
+  .concept-table thead {
+    display: table-header-group;
+  }
+
+  .report-footer {
+    break-before: avoid;
+  }
+}

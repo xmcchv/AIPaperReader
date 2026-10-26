@@ -95,6 +95,15 @@ $env:PAPERLENS_API_KEY='sk-xxx'; node server/index.mjs
 **结构化抽取**（第二次调用）
 精读结束后自动再请求一次，让模型输出严格 JSON：`tags` / `concepts` / `claims` / `diagram`。服务端会做容错归一化（丢悬空边、补默认 kind、限制节点数），坏 JSON 会自动重试一次。
 
+**导出报告**（PDF / HTML）
+精读面板右上角「导出报告」把整份精读整理成 A4 报告：
+
+- 结构：封面（标题/来源/模型/标签/一句话结论）→ 执行摘要 → 精读正文（7 节）→ 核心概念与关键论断 → 方法链路图（浅色矢量 SVG）→ 追问要点 + 完整问答 → 可选原文节选
+- 可勾选包含内容，追问可选「全部 / 最近 5 条 / 不含」
+- 「打印 / 保存为 PDF」：在隐藏 iframe 里渲染报告后调起浏览器打印（不依赖弹窗权限），打印对话框里选「另存为 PDF」即可
+- 「下载 HTML」：下载同款报告，CSS 已内联；公式字体走 KaTeX CDN，离线时显示 LaTeX 原文
+- 导出前调用一次 `/api/export/summary` 生成「执行摘要 + 追问要点」；demo 模式或调用失败会退回**本地归纳**（每节首句 + 每条回答首句），不会挡住导出
+
 **交互图解**（自研 SVG 渲染器，无 Mermaid 依赖）
 - 按有向边做最长路径分层，自动生成「输入 → 处理 → 输出」链路
 - 横向/纵向布局按容器宽高比自动切换（右侧窄栏用纵向，放大后切回横向）
@@ -120,6 +129,9 @@ public/
   text.js       原文分段、精读 markdown 解析（纯函数，可单测）
   pdfview.js    PDF 原版渲染 + 段落热区（坐标聚合算法可离线测试）
   diagram.js    交互式 SVG 图解渲染器（布局算法可单独测试）
+  math.js       精读/追问里的 KaTeX 公式渲染（CDN 按需加载）
+  report.js     导出报告：HTML 模板、iframe 打印、HTML 下载（纯函数可离线测试）
+  report.css    报告的 A4 打印样式（构建时内联进报告）
 data/config.json  运行时生成（已 .gitignore）
 ```
 
@@ -133,6 +145,7 @@ data/config.json  运行时生成（已 .gitignore）
 | POST | `/api/analyze` | 精读，SSE 流（`meta` / `thinking` / `delta` / `notice` / `done` / `error`） |
 | POST | `/api/structure` | 结构化 JSON（含图解数据），失败自动重试一次 |
 | POST | `/api/ask` | 追问，SSE 流 |
+| POST | `/api/export/summary` | 导出报告前的执行摘要 + 追问要点；demo/失败时返回本地归纳 |
 | POST | `/api/paper/fetch` | 按 arXiv 编号/链接抓取论文 |
 | GET | `/api/sample` | 内置示例论文 |
 
