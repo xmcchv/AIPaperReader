@@ -4,12 +4,20 @@
  * api_key 只存在于服务端，回传给前端时永远是被掩码的。
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const DATA_DIR = path.join(ROOT, 'data');
-const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
+/** 运行时配置默认放在用户目录，避免 API Key 被误提交进仓库；可用环境变量覆盖 */
+export const DATA_DIR = path.resolve(
+  process.env.PAPERLENS_DATA_DIR || path.join(os.homedir(), '.paperlens'),
+);
+const CONFIG_PATH = process.env.PAPERLENS_CONFIG
+  ? path.resolve(process.env.PAPERLENS_CONFIG)
+  : path.join(DATA_DIR, 'config.json');
+/** 旧版本把配置放在仓库内，首次启动会自动迁移到上面的位置 */
+const LEGACY_CONFIG_PATH = path.join(ROOT, 'data', 'config.json');
 
 /** 常用服务商预设：都是 OpenAI 兼容端点，切模型只改三个字段 */
 export const PRESETS = {
@@ -76,14 +84,31 @@ const CONFIG_VERSION = 3;
 
 const MASK = '••••••••';
 
-function readFileConfig() {
+function readJson(file) {
   try {
-    const raw = fs.readFileSync(CONFIG_PATH, 'utf8');
+    const raw = fs.readFileSync(file, 'utf8');
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === 'object' ? parsed : null;
   } catch {
     return null;
   }
+}
+
+function readFileConfig() {
+  const current = readJson(CONFIG_PATH);
+  if (current) return current;
+  // 兼容旧版本：把仓库内的 data/config.json 自动迁移到用户目录
+  if (CONFIG_PATH === LEGACY_CONFIG_PATH) return null;
+  const legacy = readJson(LEGACY_CONFIG_PATH);
+  if (!legacy) return null;
+  try {
+    fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
+    fs.writeFileSync(CONFIG_PATH, `${JSON.stringify(legacy, null, 2)}\n`, 'utf8');
+    console.log(`  ➜  已把旧配置迁移到 ${CONFIG_PATH}（仓库内的 data/config.json 可以删除）`);
+  } catch {
+    /* 迁移失败也先用旧配置启动，不阻塞 */
+  }
+  return legacy;
 }
 
 function fromEnv() {

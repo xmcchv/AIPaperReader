@@ -22,7 +22,7 @@ node server/index.mjs
 | 字段 | 说明 | 例子 |
 | --- | --- | --- |
 | Base URL | OpenAI 兼容端点，一般以 `/v1` 结尾 | `https://api.deepseek.com/v1` |
-| API Key | 只写不读回，存本机 `data/config.json` | `sk-...` |
+| API Key | 只写不读回，存本机 `~/.paperlens/config.json`（可用 `PAPERLENS_CONFIG` 指定） | `sk-...` |
 | 模型名 | 该端点支持的模型（有候选下拉） | `deepseek-v4-flash` |
 
 点「测试连接」会真发一个 `ping` 请求验证三件套，成功后再「保存」。之后「开始精读」就是真实模型在跑。
@@ -56,7 +56,7 @@ PAPERLENS_API_KEY=sk-xxx node server/index.mjs
 $env:PAPERLENS_API_KEY='sk-xxx'; node server/index.mjs
 ```
 
-可选：`PAPERLENS_BASE_URL`、`PAPERLENS_MODEL`、`PAPERLENS_PROVIDER`、`PAPERLENS_MAX_TOKENS`、`PAPERLENS_TEMPERATURE`。没设时用 DeepSeek 预设的地址与模型。
+可选：`PAPERLENS_BASE_URL`、`PAPERLENS_MODEL`、`PAPERLENS_PROVIDER`、`PAPERLENS_MAX_TOKENS`、`PAPERLENS_TEMPERATURE`。没设时用 DeepSeek 预设的地址与模型。配置文件默认在 `~/.paperlens/config.json`，可用 `PAPERLENS_CONFIG` 指定文件、`PAPERLENS_DATA_DIR` 指定目录；旧版本的 `data/config.json` 会在首次启动时自动迁移过去。
 
 ## 它做了什么
 
@@ -132,7 +132,7 @@ public/
   math.js       精读/追问里的 KaTeX 公式渲染（CDN 按需加载）
   report.js     导出报告：HTML 模板、iframe 打印、HTML 下载（纯函数可离线测试）
   report.css    报告的 A4 打印样式（构建时内联进报告）
-data/config.json  运行时生成（已 .gitignore）
+data/config.example.json  配置模板（不含 Key；实际配置写在 ~/.paperlens/config.json）
 ```
 
 ## 接口
@@ -158,7 +158,8 @@ data: {"type":"done","mode":"live"}
 
 ## 说明与边界
 
-- 服务只监听 `127.0.0.1`，API Key 保存在 `data/config.json` 明文（本机文件，已加入 `.gitignore`）。要多人共用请自行加认证层。
+- 服务只监听 `127.0.0.1`，API Key 保存在 `~/.paperlens/config.json`（本机用户目录，不在仓库内）。部署场景建议用 `PAPERLENS_API_KEY` 环境变量，不要落盘。
+- 仓库不跟踪任何含 Key 的文件，`.gitignore` 已忽略 `data/config.json` / `.env*`。如果不小心提交过 Key：仅删除文件不够，请立即轮换 Key 并清理 Git 历史（`git filter-repo`）。
 - 精读正文会按长度截断（默认保留头 70% + 尾 30%，约 26000 字符），超长论文建议分章精读。
 - PDF 解析依赖从 CDN 动态加载 pdf.js；纯离线环境请改用「粘贴正文」。
 - arXiv 全文依赖 `arxiv.org/html/<id>` 是否存在，老论文可能只有摘要，此时会提示直接粘贴正文。
