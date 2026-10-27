@@ -1236,6 +1236,27 @@ button.badge.clickable:hover {
   background: rgba(61, 220, 151, 0.07);
 }
 
+/* 图内文字 / 表格 / 公式 / 脚注 / 参考文献：用淡色区分，避免和正文段落混淆 */
+.pdf-para.is-figure {
+  background: rgba(77, 163, 255, 0.045);
+}
+
+.pdf-para.is-table {
+  background: rgba(61, 220, 151, 0.05);
+}
+
+.pdf-para.is-formula {
+  background: rgba(157, 123, 255, 0.06);
+}
+
+.pdf-para.is-footnote,
+.pdf-para.is-reference,
+.pdf-para.is-margin,
+.pdf-para.is-front-matter {
+  background: rgba(140, 150, 170, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(140, 150, 170, 0.14);
+}
+
 .pdf-para.flash {
   animation: paraFlash 1.6s var(--ease);
 }

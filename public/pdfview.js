@@ -223,7 +223,7 @@ function baseLeading(deltas) {
  * - 首行缩进要看「下一行是否缩回去」——列表项（hanging indent）的续行
  *   相对正文左边界同样右移，只比较左边界会把每一行都切成新段
  */
-function segmentColumn(segments, pageIndex, col) {
+function segmentColumn(segments, pageIndex, col, pageHeight = 0) {
   if (!segments.length) return [];
 
   const list = [...segments].sort((a, b) => a.baseline - b.baseline || a.x0 - b.x0);
@@ -328,12 +328,195 @@ function segmentColumn(segments, pageIndex, col) {
     // 段落最后一行是否排满：跨栏/跨页续接时用来判断「这句话确实没写完」
     para.fullLastLine = rightEdge > 0 && para.lastX1 >= rightEdge - Math.max(para.lastFh * 1.5, 4);
     para.rects = [{ page: para.page, col: para.col, x0: para.x0, y0: para.y0, x1: para.x1, y1: para.y1 }];
+    para.fh = para.lastFh;
+    para.bodyFh = bodyFh;
+    para.kind = para.heading ? 'heading' : para.caption ? 'caption' : 'body';
+  }
+  return classifyColumn(paras, { base, bodyFh, pageHeight, pageIndex, col });
+}
+
+/** 短行候选：图内标签、表格行、公式碎片通常短、没有句末标点、也不是列表项 */
+function isShortCandidate(para) {
+  const text = String(para.text || '').trim();
+  if (!text || text.length >= 60) return false;
+  if (/[.!?。！？]$/.test(text)) return false;
+  if (BULLET_RE.test(text)) return false;
+  if (/^\[\d+\]/.test(text)) return false;
+  return !para.heading && !para.caption;
+}
+
+/** 把连续短行合并成一个图/表/公式块，避免逐行成段 */
+function mergeShortGroup(group, pageIndex, col) {
+  const text = group.map((p) => p.text.trim()).join('\n');
+  const mathChars = (text.match(/[=^_\\√∫∑∏≈≤≥≠]/g) || []).length;
+  const digits = (text.match(/[0-9]/g) || []).length;
+  const x0s = new Set(group.map((p) => Math.round(p.x0)));
+
+  let kind = 'figure';
+  const mathSignal = /[=^_\\√∫∑∏≈≤≥≠]/.test(text);
+  if (mathSignal && (mathChars / Math.max(1, text.length) > 0.03 || /[\\^_√∫∑∏]/.test(text) || /=/.test(text))) {
+    kind = 'formula';
+  } else if (digits / Math.max(1, text.length) > 0.2 || x0s.size >= 2) {
+    // 每行很短、行数少的更像图内标签；行数足够且列对齐的才归为表格
+    kind = group.length >= 6 && text.length / group.length >= 22 ? 'table' : 'figure';
+  }
+
+  const x0 = Math.min(...group.map((p) => p.x0));
+  const x1 = Math.max(...group.map((p) => p.x1));
+  const y0 = Math.min(...group.map((p) => p.y0));
+  const y1 = Math.max(...group.map((p) => p.y1));
+  const last = group[group.length - 1];
+  return {
+    ...group[0],
+    x0,
+    x1,
+    y0,
+    y1,
+    text,
+    kind,
+    rects: [{ page: pageIndex, col, x0, y0, x1, y1 }],
+    lastX1: last.lastX1,
+    lastFh: last.lastFh,
+    fullLastLine: last.fullLastLine,
+    mergedLines: group.length,
+  };
+}
+
+/** 同栏正文续接：上一段末尾没写完、下一段以小写/数字/中文开头，且间距是段内行距 */
+function continueSameColumn(prev, next, base) {
+  if (!prev || !next || prev.kind !== 'body' || next.kind !== 'body') return false;
+  const tail = String(prev.text || '').trim();
+  if (tail.length < 60) return false;
+  if (/[.!?。！？:：;；)】」”"']$/.test(tail) && !/[-‐‑]$/.test(tail)) return false;
+  if (!/^[a-z0-9\u4e00-\u9fff]/.test(String(next.text || '').trim())) return false;
+  return next.y0 - prev.y1 <= base * 2.2;
+}
+
+/** 合并两段的文本与坐标（供同栏/跨栏续接共用） */
+function mergeParagraph(target, source) {
+  const nextText = String(source.text || '').trim();
+  if (/[-‐‑]$/.test(target.text.trimEnd()) && /^[a-z]/.test(nextText)) {
+    target.text = target.text.trimEnd().slice(0, -1) + nextText;
+  } else {
+    target.text = joinText(target.text, nextText);
+  }
+  target.x0 = Math.min(target.x0, source.x0);
+  target.x1 = Math.max(target.x1, source.x1);
+  target.y1 = Math.max(target.y1, source.y1);
+  target.lastX1 = source.lastX1;
+  target.lastFh = source.lastFh;
+  target.fullLastLine = source.fullLastLine;
+  target.rects.push(...source.rects);
+  return target;
+}
+
+/** 图内文字块：像 "3x3 conv, 64 / pool, /2" 这种无句末标点、标签词和数字都多的块 */
+function isFigureLike(para) {
+  const text = String(para.text || '').trim();
+  if (text.length < 40 || /[.!?。！？]$/.test(text)) return false;
+  const labels = (text.match(/\b(conv|pool|fc|layer|output|size|input|stride)\b/gi) || []).length;
+  const digits = (text.match(/[0-9]/g) || []).length;
+  return labels >= 2 && digits / text.length > 0.08;
+}
+
+/**
+ * 页面/栏内分类：
+ * - 页边/页眉、脚注先标记，不参与正文
+ * - 连续短行合并成 figure/table/formula 块（图内标签、表格行、公式碎片）
+ * - 同栏正文被误切时接回去
+ */
+function classifyColumn(paras, { base, bodyFh, pageHeight, pageIndex, col }) {
+  if (!paras.length) return paras;
+  const topLimit = pageHeight ? pageHeight * 0.1 : -Infinity;
+  const bottomLimit = pageHeight ? pageHeight * 0.88 : Infinity;
+
+  for (const para of paras) {
+    if (para.kind !== 'body') continue;
+    if (para.y1 < topLimit && para.text.trim().length < 120) {
+      para.kind = 'margin';
+    } else if (para.y0 > bottomLimit && (para.fh < bodyFh * 0.95 || /^\d{1,2}\s/.test(para.text.trim()))) {
+      para.kind = 'footnote';
+    } else if (isFigureLike(para)) {
+      para.kind = 'figure';
+    }
+  }
+
+  const grouped = [];
+  for (let i = 0; i < paras.length; i += 1) {
+    const para = paras[i];
+    if (para.kind !== 'body' || !isShortCandidate(para)) {
+      grouped.push(para);
+      continue;
+    }
+    const group = [para];
+    let j = i + 1;
+    while (j < paras.length) {
+      const next = paras[j];
+      if (next.kind !== 'body' || !isShortCandidate(next)) break;
+      if (next.y0 - group[group.length - 1].y1 > base * 2.2) break;
+      group.push(next);
+      j += 1;
+    }
+    if (group.length >= 2) {
+      grouped.push(mergeShortGroup(group, pageIndex, col));
+      i = j - 1;
+    } else {
+      // 单个孤立短行（图内标签/公式碎片）也归类，避免进入正文文本
+      const text = para.text.trim();
+      if (bodyFh > 0 && para.fh < bodyFh * 1.05 && text.length < 40) {
+        para.kind = /[=^_\\√∫∑∏≈≤≥≠]/.test(text) ? 'formula' : 'figure';
+      }
+      grouped.push(para);
+    }
+  }
+
+  const out = [];
+  for (const para of grouped) {
+    const prev = out[out.length - 1];
+    if (prev && continueSameColumn(prev, para, base)) {
+      mergeParagraph(prev, para);
+      continue;
+    }
+    out.push(para);
+  }
+  return out;
+}
+
+/** 首页摘要/Introduction 之前的作者、单位、邮箱、版权声明（保留大字号论文标题） */
+function markFrontMatter(paras) {
+  const firstPage = paras.filter((p) => p.page === 0);
+  if (!firstPage.length) return;
+  const abstract = firstPage.find(
+    (p) => p.kind === 'heading' && /^(abstract|摘要|1\.?\s+introduction|introduction)$/i.test(p.text.trim()),
+  );
+  if (!abstract) return;
+  const candidates = firstPage.filter(
+    (p) => p.y0 < abstract.y0 && !['heading', 'caption', 'margin', 'footnote', 'reference'].includes(p.kind),
+  );
+  if (!candidates.length) return;
+  // 论文标题通常是字号最大的那段；字号相同则取第一段，其余（作者/单位/邮箱/版权）标为首页信息
+  const maxFh = Math.max(...candidates.map((p) => p.fh || 0));
+  const title = candidates.find((p) => (p.fh || 0) === maxFh) || candidates[0];
+  for (const para of candidates) {
+    if (para !== title) para.kind = 'front-matter';
+  }
+}
+
+/** 参考文献：References 标题之后的正文段落单独归类，方便精读/导出过滤 */
+function markReferences(paras) {
+  let inRefs = false;
+  for (const para of paras) {
+    if (para.heading && /^(references?|bibliography|参考文献)$/i.test(para.text.trim())) {
+      inRefs = true;
+    } else if (inRefs && para.kind !== 'heading' && para.kind !== 'caption') {
+      para.kind = 'reference';
+    }
   }
   return paras;
 }
 
 /** 片段 → 段落（按栏分别聚合，返回按阅读顺序排列的段落）。导出供离线测试 */
-export function groupParagraphs(segments, pageIndex) {
+export function groupParagraphs(segments, pageIndex, pageHeight = 0) {
   const byCol = new Map();
   for (const seg of segments) {
     if (!byCol.has(seg.col)) byCol.set(seg.col, []);
@@ -341,7 +524,7 @@ export function groupParagraphs(segments, pageIndex) {
   }
   const paras = [];
   for (const [col, list] of [...byCol.entries()].sort((a, b) => a[0] - b[0])) {
-    paras.push(...segmentColumn(list, pageIndex, col));
+    paras.push(...segmentColumn(list, pageIndex, col, pageHeight));
   }
   return paras;
 }
@@ -398,7 +581,7 @@ export function buildPageParagraphs(items, pageWidth, pageHeight, pageIndex = 0)
 
   const allSegments = [...merged.values()];
   return {
-    paras: readingOrder(groupParagraphs(allSegments, pageIndex), allSegments),
+    paras: readingOrder(groupParagraphs(allSegments, pageIndex, pageHeight), allSegments),
     twoColumn,
     midX,
     segments: allSegments,
@@ -432,6 +615,9 @@ function startsContinued(text) {
 function continuesNext(prev, next) {
   if (!prev || !next) return false;
   if (prev.heading || next.heading || next.caption) return false;
+  // 图/表/公式/脚注/参考文献块不参与正文续接
+  if (prev.kind && !['body', 'caption'].includes(prev.kind)) return false;
+  if (next.kind && next.kind !== 'body') return false;
   if (isLikelyNoise(prev) || isLikelyNoise(next)) return false;
   if (prev.page === next.page && prev.col === next.col) return false;
   if (prev.page !== next.page) {
@@ -474,22 +660,13 @@ function findMergeTarget(out, para) {
 
 /** 文档级：把跨栏 / 跨页断开的同一段接回来（保留多块热区坐标）。导出供离线测试 */
 export function mergeFlowingParagraphs(paras) {
+  markFrontMatter(paras);
+  markReferences(paras);
   const out = [];
   for (const para of paras) {
     const prev = findMergeTarget(out, para);
     if (prev) {
-      const nextText = para.text.trim();
-      if (/[-‐‑]$/.test(prev.text.trimEnd()) && /^[a-z]/.test(nextText)) {
-        prev.text = prev.text.trimEnd().slice(0, -1) + nextText;
-      } else {
-        prev.text = joinText(prev.text, nextText);
-      }
-      prev.rects.push(...para.rects);
-      prev.x1 = Math.max(prev.x1, para.x1);
-      prev.y1 = Math.max(prev.y1, para.y1);
-      prev.lastX1 = para.lastX1;
-      prev.lastFh = para.lastFh;
-      prev.fullLastLine = para.fullLastLine;
+      mergeParagraph(prev, para);
       continue;
     }
     out.push(para);
@@ -535,7 +712,18 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
     state.activePara = para;
     const card = el('div', 'pdf-card');
     const head = el('div', 'pdf-card-head');
-    head.appendChild(el('span', 'pdf-card-tag', para.heading ? '章节标题' : para.caption ? '图表说明' : `第 ${para.page + 1} 页`));
+    const kindLabels = {
+      heading: '章节标题',
+      caption: '图表说明',
+      figure: '图内文字',
+      table: '表格',
+      formula: '公式',
+      footnote: '脚注',
+      reference: '参考文献',
+      margin: '页边/页眉',
+      'front-matter': '首页信息',
+    };
+    head.appendChild(el('span', 'pdf-card-tag', kindLabels[para.kind] || `第 ${para.page + 1} 页`));
     const close = el('button', 'pdf-card-close', '✕');
     close.type = 'button';
     close.onclick = clearCard;
@@ -608,7 +796,9 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
       for (const { para, rect } of pageData.boxes) {
         const box = el(
           'div',
-          `pdf-para${para.heading ? ' is-heading' : ''}${para.caption ? ' is-caption' : ''}`,
+          `pdf-para${para.heading ? ' is-heading' : ''}${para.caption ? ' is-caption' : ''}${
+            para.kind && !['body', 'heading', 'caption'].includes(para.kind) ? ` is-${para.kind}` : ''
+          }`,
         );
         box.dataset.pid = para.id;
         box.style.left = `${rect.x0 * state.scale}px`;
@@ -697,7 +887,9 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
           if (pageData) pageData.boxes.push({ para, rect });
         }
       }
-      const textParts = paras.map((para) => (para.heading ? `\n${para.text}\n` : para.text));
+      const textParts = paras
+        .filter((para) => !['margin', 'footnote', 'reference', 'figure', 'front-matter'].includes(para.kind))
+        .map((para) => (para.heading ? `\n${para.text}\n` : para.text));
 
       state.doc = doc;
       state.pdfjs = pdfjs;
