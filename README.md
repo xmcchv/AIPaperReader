@@ -1,8 +1,8 @@
-# PaperLens · 论文精读工作台
+# PaperLens · 论文精读 + 知识图谱
 
-原文、AI 结构化解读、交互式图解三栏合一，**可配置任意 OpenAI 兼容模型 API**（Kimi / DeepSeek / OpenAI / 智谱 / Ollama / 自建端点）。
+同一个本地网页承载「原文 / AI 精读 / 交互图解」与「概念知识图谱」：左上角开关切换，论文与精读结果自动存入本机论文库，读完可一键把概念、方法链路与原文出处汇入图谱。**可配置任意 OpenAI 兼容模型 API**（Kimi / DeepSeek / OpenAI / 智谱 / Ollama / 自建端点）。
 
-![布局](https://img.shields.io/badge/layout-原文%20%7C%20精读%20%7C%20图解-4da3ff) ![deps](https://img.shields.io/badge/dependencies-0-3ddc97) ![node](https://img.shields.io/badge/node-%3E%3D18-339933)
+![布局](https://img.shields.io/badge/layout-精读%20%7C%20图谱-4da3ff) ![deps](https://img.shields.io/badge/dependencies-0-3ddc97) ![node](https://img.shields.io/badge/node-%3E%3D22.5-339933) ![storage](https://img.shields.io/badge/storage-SQLite%20(WAL)-4da3ff)
 
 ## 快速开始
 
@@ -11,11 +11,17 @@ node server/index.mjs
 # 打开 http://127.0.0.1:5173
 ```
 
-（`server/index.js` 是等价别名，`node server/index.js` 也能启动。端口被占用时换一个：PowerShell 写 `$env:PORT=5175; node server/index.mjs`，bash 写 `PORT=5175 node server/index.mjs`。）
+（`server/index.js` 是等价别名。端口被占用时换一个：PowerShell 写 `$env:PORT=5175; node server/index.mjs`，bash 写 `PORT=5175 node server/index.mjs`。）
 
-没有安装步骤，没有 `npm install`：服务端只用 Node 内置模块，前端是原生 HTML/CSS/ESM。
+需要 **Node ≥ 22.5**（论文库与知识图谱使用 Node 内置的 `node:sqlite`，仍然零依赖）。没有安装步骤，也没有 `npm install`：服务端只用 Node 内置模块，前端是原生 HTML/CSS/ESM。
 
-第一次启动时**未配置 API Key，会进入 demo 模式**——点「示例论文」→「开始精读」就能看到完整的三栏交互和内置示例结果（精读正文、概念卡、方法链路图都是预置的，用于先验证交互）。
+一个页面、两个视图：
+
+- 左侧 `精读 | 知识图谱` 开关切换（地址仍是同一个 `/`，`?view=kg` 记录状态）
+- 精读视图：原文 / AI 精读 / 交互图解三栏
+- 图谱视图：概念、前置关系、原文出处，可切分层图 / 思维导图 / 星空
+
+第一次启动时**未配置 API Key，会进入 demo 模式**——点「示例论文」→「开始精读」就能看到完整交互；图谱侧点「看看示例图谱」也能直接体验。
 
 接着点右上角「模型设置」，填三项：
 
@@ -152,23 +158,39 @@ $env:PAPERLENS_API_KEY='sk-xxx'; node server/index.mjs
 
 ```
 server/
-  index.mjs     HTTP 路由、SSE、静态文件（零依赖，约 300 行）
-  config.mjs    配置读写 + 预设，api_key 只落本机、回前端时打码
-  llm.mjs       OpenAI 兼容客户端：流式 SSE 解析、JSON 抽取、连通性测试
-  prompts.mjs   精读 / 结构化 / 追问三套提示词
-  paper.mjs     arXiv 抓取（abs 页 + HTML 全文，正则抽取并清洗）
-  samples.mjs   内置示例论文与 demo 模式数据
+  index.mjs          唯一入口：路由、SSE、静态文件（单端口 5173）
+  shared/
+    config.mjs       统一模型配置（文本 + 视觉），API Key 加密存储
+    secret.mjs       scrypt + AES-256-GCM
+    llm.mjs          OpenAI 兼容客户端：流式 SSE、JSON 抽取、视觉输入
+    http.mjs         JSON / SSE / 静态文件工具
+  paper/
+    routes.mjs       论文库 API（/api/paper/*）
+    library.mjs      papers.db：正文 / 精读 / 结构化 / 追问 / PDF
+  kg/
+    routes.mjs       /api/kg/* 路由、导入编排、PaperLens 适配
+    store.mjs        多图谱 SQLite 存储、检索、快照
+    extract.mjs      概念 / 前置关系 / 原文出处抽取
+    web.mjs          网页与 arXiv 正文抓取
+    demo.mjs         内置示例图谱
 public/
-  index.html    三栏工作台 + 两个 dialog
-  styles.css    深/浅双主题，CSS 变量驱动
-  app.js        流式渲染、状态管理、设置面板、视图切换
-  text.js       原文分段、精读 markdown 解析（纯函数，可单测）
-  pdfview.js    PDF 原版渲染 + 段落热区（坐标聚合算法可离线测试）
-  diagram.js    交互式 SVG 图解渲染器（布局算法可单独测试）
-  math.js       精读/追问里的 KaTeX 公式渲染（CDN 按需加载）
-  report.js     导出报告：HTML 模板、iframe 打印、HTML 下载（纯函数可离线测试）
-  report.css    报告的 A4 打印样式（构建时内联进报告）
-data/config.example.json  配置模板（不含 Key；实际配置写在 ~/.paperlens/config.json）
+  index.html         单页外壳：精读视图 + 图谱视图 + 左上角开关
+  app.js             精读状态机、论文库持久化、一键推送
+  shell.js           视图切换（?view=kg）
+  text.js            原文分段、精读 markdown 解析（纯函数）
+  pdfview.js         PDF 原版渲染 + 段落热区
+  diagram.js         交互式 SVG 图解渲染器
+  math.js            KaTeX 公式渲染（CDN 按需加载）
+  report.js          导出报告：HTML 模板、iframe 打印
+  kg/
+    app.js graph.js starfield.js   知识图谱前端
+    styles.css                     图谱原始样式
+    styles.scoped.css              作用域化后的样式（单页外壳使用）
+tools/restore-from-reports.mjs     从精读报告还原图谱
+docs/开发纪要.md                   图谱设计决策与运维记录
+docs/合并设计方案.md               合并架构与分阶段方案
+data/config.example.json           配置模板（实际配置在 ~/.paperlens/config.json）
+~/.paperlens/data/                 图谱库、论文库、PDF、每日快照（不进仓库）
 ```
 
 ## 接口
@@ -176,14 +198,30 @@ data/config.example.json  配置模板（不含 Key；实际配置写在 ~/.pape
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/api/config` | 当前配置（key 打码）+ 预设（含各服务商模型候选） |
-| POST | `/api/config` | 保存配置：`base_url` / `model` / `api_key` / `max_tokens` / `temperature` / `extra_body`；`{"clear_key":true}` 清除 Key |
+| POST | `/api/config` | 保存配置：`base_url` / `model` / `api_key` / `max_tokens` / `temperature` / `extra_body` / `vision_*`；`{"clear_key":true}` 清除 Key |
 | POST | `/api/config/test` | 连通性测试，返回延迟与模型回复 |
+| POST | `/api/config/unlock` | 用主密码解锁文本与视觉模型 Key |
 | POST | `/api/analyze` | 精读，SSE 流（`meta` / `thinking` / `delta` / `notice` / `done` / `error`） |
 | POST | `/api/structure` | 结构化 JSON（含图解数据），失败自动重试一次 |
 | POST | `/api/ask` | 追问，SSE 流 |
 | POST | `/api/export/summary` | 导出报告前的执行摘要 + 追问要点；demo/失败时返回本地归纳 |
 | POST | `/api/paper/fetch` | 按 arXiv 编号/链接抓取论文 |
 | GET | `/api/sample` | 内置示例论文 |
+| GET | `/api/paper/library` | 论文库列表（标题 / 字数 / 是否有精读 / 是否有 PDF） |
+| POST | `/api/paper/save` | 新建或更新论文（正文 / 精读 / 结构化 / 追问） |
+| GET | `/api/paper/get?id=` | 读取一篇论文的完整记录 |
+| POST | `/api/paper/delete` | 从论文库删除 |
+| POST/GET | `/api/paper/pdf` | 保存 / 读取论文 PDF 原件 |
+| GET | `/api/kg/state` | 图谱整库 + 模型配置 + 存储信息（打开页面时一次请求） |
+| GET | `/api/kg/graphs` | 图谱（工作区）列表 |
+| POST | `/api/kg/graphs/{create,rename,delete,activate}` | 新建 / 改名 / 删除 / 切换图谱 |
+| POST | `/api/kg/import` | 导入文本 / 网页 / 图片 / 论文 |
+| POST | `/api/kg/import/paper` | 精读页一键推送：`{paper, paperId, reading, structure}` |
+| POST | `/api/kg/sources/{text,delete,reextract}` | 读资料全文 / 删资料 / 重新抽取 |
+| POST | `/api/kg/concepts`、`/api/kg/concepts/enrich`、`/api/kg/concepts/delete` | 手工建点 / AI 补全 / 删除 |
+| POST | `/api/kg/edges`、`/api/kg/edges/delete` | 手工加 / 删关系 |
+| GET | `/api/kg/search?q=` | 概念与资料正文检索 |
+| GET | `/api/health` | 存活探测（同一进程同时报告精读与图谱） |
 
 `/api/analyze` 的 SSE 帧格式：
 
@@ -194,12 +232,15 @@ data: {"type":"done","mode":"live"}
 
 ## 说明与边界
 
-- 服务只监听 `127.0.0.1`，API Key 保存在 `~/.paperlens/config.json`（本机用户目录，不在仓库内）。部署场景建议用 `PAPERLENS_API_KEY` 环境变量，不要落盘。
-- 仓库不跟踪任何含 Key 的文件，`.gitignore` 已忽略 `data/config.json` / `.env*`。如果不小心提交过 Key：仅删除文件不够，请立即轮换 Key 并清理 Git 历史（`git filter-repo`）。
+- 服务只监听 `127.0.0.1`。模型配置在 `~/.paperlens/config.json`（API Key 加密，不含明文）；论文库、图谱、PDF、每日快照都在 `~/.paperlens/data/`，可用 `PAPERLENS_DATA_DIR` 换位置。部署场景建议用 `PAPERLENS_API_KEY` 环境变量，不要落盘。
+- 需要 **Node ≥ 22.5**（`node:sqlite` 的版本门槛）。Node 22.5–23.3 要加 `--experimental-sqlite`。
+- 仓库不跟踪任何含 Key 或本地数据的文件：`.gitignore` 已忽略 `data/config.json`、`data/graphs/`、`data/backups/`、`data/papers/`、`data/*.db`、`.env*`。如果不小心提交过 Key：仅删除文件不够，请立即轮换 Key 并清理 Git 历史（`git filter-repo`）。
 - 精读正文会按长度截断（默认保留头 70% + 尾 30%，约 26000 字符），超长论文建议分章精读。
-- PDF 解析依赖从 CDN 动态加载 pdf.js；纯离线环境请改用「粘贴正文」。
+- PDF 解析依赖从 CDN 动态加载 pdf.js；纯离线环境请改用「粘贴正文」。解析后的 PDF 会存入本机论文库，换浏览器也能回到原版视图。
 - arXiv 全文依赖 `arxiv.org/html/<id>` 是否存在，老论文可能只有摘要，此时会提示直接粘贴正文。
 - 图解质量取决于模型是否按约定结构输出；结构不合规时会被归一化兜底，缺失部分在图上表现为节点无 detail。
+- 图谱侧：纯前端渲染 / 需要登录的网页抓不到正文；图片必须配视觉模型才能抽概念；概念按名称 + 别名归一化合并；一个图谱适合几百个节点，上千节点时 SVG 渲染会变慢。
+- 旧的图谱地址 `/kg/` 会 302 到 `/?view=kg`；`/kg/app.js` 等资源仍保留。
 
 ## 快捷键
 

@@ -22,6 +22,8 @@ function formatCount(n) {
 
 const state = {
   paper: { title: '', text: '', source: '' },
+  paperId: '',
+  library: [],
   readingText: '',
   readingError: '',
   structure: null,
@@ -109,6 +111,306 @@ async function postJson(url, body) {
   return res.json();
 }
 
+/* ------------------------------- 知识图谱联动 ------------------------------- */
+
+const LS_KG = 'paperlens.kg';
+
+function graphLink() {
+  try {
+    return JSON.parse(localStorage.getItem(LS_KG) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+/** 当前论文是否已经推送到图谱（标题 + 正文字数一致即视为同一篇） */
+function graphLinkMatches() {
+  const linked = graphLink();
+  return Boolean(
+    linked && linked.sourceId && linked.title === state.paper.title && linked.textLen === state.paper.text.length,
+  );
+}
+
+function updateGraphButton() {
+  const btn = $('#btn-to-graph');
+  if (!btn) return;
+  const linked = graphLinkMatches();
+  btn.dataset.linked = linked ? '1' : '';
+  btn.textContent = linked ? '已在图谱中 · 查看' : '→ 知识图谱';
+  btn.title = linked ? '打开知识图谱中这条资料的出处' : '把论文、精读与概念推送到知识图谱';
+}
+
+/** 一键入库：论文正文 + 精读 + 结构化结果。同进程直接调用，不经 HTTP 跨端口 */
+async function pushToGraph() {
+  if (!state.paper.text) return toast('先放一篇论文进来');
+  if (!state.readingText.trim()) return toast('先生成精读，再推送到知识图谱');
+  if (graphLinkMatches()) {
+    location.href = `/kg/?source=${encodeURIComponent(graphLink().sourceId)}`;
+    return;
+  }
+  const btn = $('#btn-to-graph');
+  const oldText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '推送中…';
+  try {
+    if (!state.paperId) await saveCurrentPaper();
+    const res = await postJson('/api/kg/import/paper', {
+      paper: {
+        id: state.paperId || '',
+        title: state.paper.title,
+        text: state.paper.text,
+        source: state.paper.source,
+      },
+      paperId: state.paperId || '',
+      reading: state.readingText,
+      structure: state.structure,
+      enrich: Boolean(state.config?.ready),
+    });
+    if (res.ok === false) throw new Error(res.error || '推送失败');
+    const sourceId = res.source?.id || '';
+    localStorage.setItem(
+      LS_KG,
+      JSON.stringify({
+        sourceId,
+        title: state.paper.title,
+        textLen: state.paper.text.length,
+        at: Date.now(),
+      }),
+    );
+    updateGraphButton();
+    const count = res.concepts?.length || 0;
+    const warning = (res.warnings || [])[0];
+    toast(warning ? `已入库（${count} 个概念）：${warning}` : `已入库：${count} 个概念，点开可查看图谱`);
+  } catch (err) {
+    toast(`推送失败：${err.message}`);
+  } finally {
+    btn.disabled = false;
+    if (!btn.dataset.linked) btn.textContent = oldText;
+  }
+}
+
+/** 从知识图谱回跳：/?fromSource=<sourceId> 载入该资料的论文原文 */
+async function loadFromSource() {
+  const id = new URLSearchParams(location.search).get('fromSource');
+  if (!id) return false;
+  try {
+    const res = await postJson('/api/kg/sources/text', { id });
+    if (!res?.ok || !res.text) return false;
+    setPaper({ title: res.source?.title || '', text: res.text, source: res.source?.url || '' });
+    toast('已从知识图谱载入论文原文');
+    return true;
+  } catch (err) {
+    toast(`从知识图谱载入失败：${err.message}`);
+    return false;
+  }
+}
+
+/* -------------------------------- 论文库持久化 ------------------------------- */
+
+const LS_LAST_PAPER = 'paperlens.lastPaperId';
+let paperSaveTimer = 0;
+let paperSaving = false;
+let paperSaveAgain = false;
+
+function paperPayload() {
+  return {
+    id: state.paperId || undefined,
+    title: state.paper.title,
+    source: state.paper.source,
+    kind: state.hasPdf ? 'pdf' : 'text',
+    text: state.paper.text,
+    reading_md: state.readingText,
+    reading_model: state.config?.model || '',
+    structure: state.structure,
+    ask_thread: state.askThread,
+  };
+}
+
+function schedulePaperSave(delay = 900) {
+  if (!state.paper.text) return;
+  clearTimeout(paperSaveTimer);
+  paperSaveTimer = setTimeout(() => saveCurrentPaper(), delay);
+}
+
+async function saveCurrentPaper() {
+  if (!state.paper.text) return;
+  if (paperSaving) {
+    paperSaveAgain = true;
+    return;
+  }
+  paperSaving = true;
+  try {
+    const res = await postJson('/api/paper/save', paperPayload());
+    if (res.ok && res.paper?.id) {
+      state.paperId = res.paper.id;
+      localStorage.setItem(LS_LAST_PAPER, res.paper.id);
+    }
+  } catch {
+    /* 保存失败不打断阅读 */
+  } finally {
+    paperSaving = false;
+    if (paperSaveAgain) {
+      paperSaveAgain = false;
+      schedulePaperSave(300);
+    }
+  }
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function restorePdfFromServer(id) {
+  try {
+    const res = await fetch(`/api/paper/pdf?id=${encodeURIComponent(id)}`);
+    if (!res.ok) return false;
+    const bytes = await res.arrayBuffer();
+    const result = await pdfView.load(bytes);
+    state.hasPdf = true;
+    state.pdfPages = result.numPages;
+    $('#paper-view-switch').hidden = false;
+    switchPaperView('pdf');
+    return true;
+  } catch (err) {
+    toast(`PDF 恢复失败：${err.message}`);
+    return false;
+  }
+}
+
+/** 把论文库记录贴回界面：正文、精读、结构化、追问、PDF */
+function applyPaperRecord(record) {
+  state.paperId = record.id;
+  localStorage.setItem(LS_LAST_PAPER, record.id);
+  setPaper({ title: record.title, text: record.text, source: record.source }, { keepReading: true });
+
+  state.readingText = record.reading_md || '';
+  state.readingError = '';
+  readingCards = [];
+  if (state.readingText.trim()) {
+    paintReading();
+    $('#reading-status').textContent = '已保存';
+  } else {
+    clearReading();
+  }
+
+  if (record.structure && typeof record.structure === 'object') {
+    state.structure = record.structure;
+    renderStructure(record.structure);
+  } else {
+    renderStructure(null);
+  }
+
+  clearAskThread();
+  for (const msg of Array.isArray(record.ask_thread) ? record.ask_thread : []) {
+    if (!msg || !msg.role) continue;
+    pushAsk(msg.role, String(msg.text || ''), String(msg.quote || ''));
+  }
+
+  if (record.hasPdf) restorePdfFromServer(record.id);
+  updateGraphButton();
+}
+
+async function loadPaperById(id) {
+  if (!id) return false;
+  try {
+    const res = await fetch(`/api/paper/get?id=${encodeURIComponent(id)}`).then((r) => r.json());
+    if (!res.ok || !res.paper) return false;
+    applyPaperRecord(res.paper);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 启动时优先 ?paper=<id>，其次上次打开的论文库记录，最后浏览器本地缓存 */
+async function loadInitialPaper() {
+  const wanted =
+    new URLSearchParams(location.search).get('paper') || localStorage.getItem(LS_LAST_PAPER) || '';
+  if (wanted && (await loadPaperById(wanted))) return true;
+  const restored = restorePaper();
+  if (restored) schedulePaperSave(0);
+  return restored;
+}
+
+async function refreshLibrary() {
+  try {
+    const res = await fetch('/api/paper/library').then((r) => r.json());
+    state.library = res.papers || [];
+  } catch {
+    state.library = [];
+  }
+  renderLibrary();
+}
+
+function renderLibrary() {
+  const host = $('#library-list');
+  if (!host) return;
+  if (!state.library.length) {
+    host.innerHTML = '<p class="hint">论文库还是空的。载入并精读一篇论文后会自动保存到这里。</p>';
+    return;
+  }
+  host.innerHTML = state.library
+    .map(
+      (paper) => `<div class="lib-item" data-id="${escapeHtml(paper.id)}">
+        <button class="lib-open" type="button" data-id="${escapeHtml(paper.id)}">
+          <strong>${escapeHtml(paper.title || '未命名论文')}</strong>
+          <small>${Number(paper.chars || 0).toLocaleString()} 字 · ${paper.hasReading ? '有精读' : '未精读'} · ${new Date(paper.updatedAt).toLocaleString()}</small>
+        </button>
+        <button class="btn tiny ghost lib-del" type="button" data-del="${escapeHtml(paper.id)}" title="从论文库删除">删除</button>
+      </div>`,
+    )
+    .join('');
+}
+
+async function deleteLibraryPaper(id) {
+  try {
+    const res = await postJson('/api/paper/delete', { id });
+    if (!res.ok) return toast('删除失败');
+    if (state.paperId === id) {
+      state.paperId = '';
+      localStorage.removeItem(LS_LAST_PAPER);
+    }
+    await refreshLibrary();
+    toast('已从论文库删除');
+  } catch (err) {
+    toast(`删除失败：${err.message}`);
+  }
+}
+
+async function uploadPdfToServer(bytes) {
+  if (!state.paperId && state.paper.text) await saveCurrentPaper();
+  if (!state.paperId) return;
+  try {
+    const base64 = await blobToBase64(new Blob([bytes], { type: 'application/pdf' }));
+    await postJson('/api/paper/pdf', { id: state.paperId, base64 });
+    schedulePaperSave(0);
+  } catch (err) {
+    toast(`PDF 保存失败：${err.message}`);
+  }
+}
+
+/** 从图谱出处回跳时定位到那一句（文本视图） */
+function locateQuoteInText(quote) {
+  const needle = String(quote || '').trim();
+  if (!needle) return false;
+  const body = $('#paper-body');
+  if (!body || body.hidden) return false;
+  const nodes = [...body.querySelectorAll('p, li, h1, h2, h3, h4')];
+  const head = needle.slice(0, 24);
+  const target = nodes.find((node) => node.textContent.includes(needle)) ||
+    nodes.find((node) => node.textContent.includes(head));
+  if (!target) return false;
+  target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  target.classList.add('quote-flash');
+  setTimeout(() => target.classList.remove('quote-flash'), 2400);
+  return true;
+}
+
 /* --------------------------------- 论文原文 -------------------------------- */
 
 function renderPaper() {
@@ -156,6 +458,8 @@ function setPaper(paper, { keepReading = false } = {}) {
     renderStructure(null); // 同时清空概念卡与图解
   }
   persistPaper();
+  updateGraphButton();
+  schedulePaperSave(300);
 }
 
 /** PDF 原版 / 纯文本两种原文视图切换 */
@@ -529,6 +833,7 @@ async function runAnalysis() {
   }
 
   if (!state.aborted && state.readingText.trim()) await loadStructure();
+  if (!state.aborted) schedulePaperSave(300);
 }
 
 async function loadStructure() {
@@ -541,6 +846,7 @@ async function loadStructure() {
     if (res.ok && res.data) {
       state.structure = res.data;
       renderStructure(res.data);
+      schedulePaperSave(300);
       if (res.demo && !demoToastShown) {
         demoToastShown = true;
         toast('demo 模式：图解来自内置示例，填 API Key 后即为本文专属图解', 3600);
@@ -575,6 +881,7 @@ function pushAsk(role, text, quote = '') {
   thread.scrollTop = thread.scrollHeight;
   const entry = { role, text: String(text || ''), quote: String(quote || '') };
   state.askThread.push(entry);
+  schedulePaperSave(1200);
   return { el: content, entry };
 }
 
@@ -1053,6 +1360,8 @@ async function loadPdfFile(file) {
     });
     // 存一份原始字节，刷新页面后还能回到 PDF 原版视图
     idbPut('last-pdf', { name: file.name, bytes, savedAt: Date.now() }).catch(() => {});
+    await saveCurrentPaper();
+    await uploadPdfToServer(bytes);
     status.textContent = '';
     $('#dlg-open').close();
     toast(`已解析 ${result.numPages} 页 · ${result.text.length.toLocaleString()} 字符，点任意段落可问 AI`, 3600);
@@ -1176,14 +1485,17 @@ function bindEvents() {
 
   $('#btn-clear').onclick = () => {
     setPaper({ title: '', text: '', source: '' });
+    state.paperId = '';
     $('#paper-title').value = '';
     localStorage.removeItem(LS_PAPER);
+    localStorage.removeItem(LS_LAST_PAPER);
     idbDelete('last-pdf').catch(() => {});
   };
 
   $('#paper-title').oninput = (ev) => {
     state.paper.title = ev.target.value;
     persistPaper();
+    schedulePaperSave(800);
   };
 
   $$('[data-open]').forEach((btn) => {
@@ -1195,8 +1507,26 @@ function bindEvents() {
 
   $('#open-tabs').onclick = (ev) => {
     const btn = ev.target.closest('.seg');
-    if (btn) switchOpenTab(btn.dataset.tab);
+    if (!btn) return;
+    switchOpenTab(btn.dataset.tab);
+    if (btn.dataset.tab === 'library') refreshLibrary();
   };
+
+  const libraryHost = $('#library-list');
+  if (libraryHost) {
+    libraryHost.onclick = async (ev) => {
+      const del = ev.target.closest('[data-del]');
+      if (del) {
+        await deleteLibraryPaper(del.dataset.del);
+        return;
+      }
+      const open = ev.target.closest('[data-id]');
+      if (open && (await loadPaperById(open.dataset.id))) {
+        $('#dlg-open').close();
+        toast('已打开论文库中的论文');
+      }
+    };
+  }
   $('#btn-arxiv-load').onclick = loadArxiv;
   $('#arxiv-input').onkeydown = (ev) => {
     if (ev.key === 'Enter') {
@@ -1306,6 +1636,9 @@ function bindEvents() {
       toast('复制失败，请手动选择文本');
     }
   };
+
+  // 推送到知识图谱
+  $('#btn-to-graph').onclick = pushToGraph;
 
   // 图解工具
   $('#btn-diagram-relayout').onclick = () => diagram.relayout();
@@ -1486,10 +1819,26 @@ async function main() {
   bindEvents();
   await loadConfig();
 
-  const restored = restorePaper();
+  // ?fromSource=<sourceId>：从知识图谱的出处跳回来，先载入原文
+  const fromGraph = await loadFromSource();
+  let restored = false;
+  if (fromGraph) {
+    restored = true;
+    schedulePaperSave(0);
+  } else {
+    restored = await loadInitialPaper();
+  }
+  updateGraphButton();
+  refreshLibrary();
   switchPaneIfNarrow('paper');
   if (restored) restoreCachedPdf();
-  window.addEventListener('resize', () => diagram.fit());
+  const quote = new URLSearchParams(location.search).get('quote');
+  if (quote) setTimeout(() => locateQuoteInText(quote), 180);
+  window.addEventListener('resize', () => {
+    diagram.fit();
+    // 从宽屏缩到窄屏时补一次分栏切换，否则三栏会被媒体查询全部隐藏
+    if (window.innerWidth <= 1080 && !$('.pane.mobile-active')) switchPane('paper');
+  });
 }
 
 main();
