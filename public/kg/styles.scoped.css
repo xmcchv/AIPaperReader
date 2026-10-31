@@ -974,14 +974,20 @@
     display: none;
   }
 }@media (max-width: 1020px) {.kg-view .workspace {
-    grid-template-columns: 0 minmax(0, 1fr) 300px;
+    grid-template-columns: minmax(0, 1fr) 300px;
   }.kg-view .rail {
     display: none;
+  }/* rail 隐藏后不能再靠自动放置，否则 stage 会落进 0 宽的第一列 */.kg-view .stage {
+    grid-column: 1;
+  }.kg-view .detail {
+    grid-column: 2;
   }.kg-view .stats {
     display: none;
   }
 }@media (max-width: 780px) {.kg-view .workspace {
     grid-template-columns: minmax(0, 1fr);
+  }.kg-view .stage {
+    grid-column: 1;
   }.kg-view .detail {
     display: none;
   }.kg-view .brand-text span {

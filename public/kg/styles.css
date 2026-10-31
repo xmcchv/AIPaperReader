@@ -1430,10 +1430,17 @@ mark {
 
 @media (max-width: 1020px) {
   .workspace {
-    grid-template-columns: 0 minmax(0, 1fr) 300px;
+    grid-template-columns: minmax(0, 1fr) 300px;
   }
   .rail {
     display: none;
+  }
+  /* rail 隐藏后不能再靠自动放置，否则 stage 会落进 0 宽的第一列 */
+  .stage {
+    grid-column: 1;
+  }
+  .detail {
+    grid-column: 2;
   }
   .stats {
     display: none;
@@ -1443,6 +1450,9 @@ mark {
 @media (max-width: 780px) {
   .workspace {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .stage {
+    grid-column: 1;
   }
   .detail {
     display: none;

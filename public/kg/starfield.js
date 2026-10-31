@@ -87,11 +87,40 @@ export class StarfieldView {
 
     const total = Math.max(1, ordered.length);
     const disk = 90 + Math.sqrt(total) * 130;
+
+    // 连接数 + 出处/资料数 + 解释完整度 → 重要性；越重要球越大
+    const degree = new Map();
+    for (const edge of this.lib.edges) {
+      degree.set(edge.from, (degree.get(edge.from) || 0) + 1);
+      degree.set(edge.to, (degree.get(edge.to) || 0) + 1);
+    }
+    const scores = ordered.map((node) => {
+      const concept = node.concept || {};
+      const deg = degree.get(node.id) || 0;
+      const refs = Array.isArray(concept.refs) ? concept.refs.length : 0;
+      const sources = Array.isArray(concept.sourceIds) ? concept.sourceIds.length : 0;
+      const summary = String(concept.summary || '').length;
+      let score =
+        Math.log1p(deg) * 1.0 +
+        Math.log1p(refs) * 0.9 +
+        Math.log1p(sources) * 0.7 +
+        Math.min(1, summary / 120) * 0.5;
+      if (concept.stub) score *= 0.55;
+      if (concept.kind === 'method' || concept.kind === 'task') score += 0.25;
+      return score;
+    });
+    const minScore = scores.length ? Math.min(...scores) : 0;
+    const maxScore = scores.length ? Math.max(...scores) : 0;
+    const span = maxScore - minScore || 1;
+
     this.stars = ordered.map((node, index) => {
       const r = disk * Math.sqrt((index + 0.5) / total);
       const theta = index * GOLDEN_ANGLE;
       const j1 = hash(node.id) - 0.5;
       const j2 = hash(`${node.id}#z`) - 0.5;
+      const t = (scores[index] - minScore) / span;
+      // 2.6 ~ 11.6：孤立概念是小点，连接多 / 出处多的枢纽是大球
+      const size = 2.6 + Math.pow(t, 0.6) * 9 + (hash(`${node.id}#r`) - 0.5) * 0.5;
       return {
         id: node.id,
         concept: node.concept,
@@ -99,7 +128,7 @@ export class StarfieldView {
         x: Math.cos(theta) * r + j1 * 46,
         y: (node.layer - maxLayer / 2) * -110 + j2 * 30,
         z: Math.sin(theta) * r + j1 * 46,
-        r: 3 + Math.min(4, (node.concept.sourceIds?.length || 0) * 0.8) + hash(`${node.id}#r`) * 1.6,
+        r: Math.max(2.2, size),
         phase: hash(`${node.id}#t`) * Math.PI * 2,
         neighbors: new Set(),
       };
