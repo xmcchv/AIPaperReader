@@ -249,6 +249,32 @@ data: {"type":"done","mode":"live"}
 - 图谱侧：纯前端渲染 / 需要登录的网页抓不到正文；图片必须配视觉模型才能抽概念；概念按名称 + 别名归一化合并；一个图谱适合几百个节点，上千节点时 SVG 渲染会变慢。
 - 旧的图谱地址 `/kg/` 会 302 到 `/?view=kg`；`/kg/app.js` 等资源仍保留。
 
+## 桌面启动器（不想用命令行时）
+
+首次安装 Electron（仅开发 / 打包需要）：
+
+```bash
+npm install
+npm run desktop
+```
+
+双击启动器后会自动：
+
+- 检测 5173 是否已有 PaperLens 在运行，有就直接打开；
+- 没有就拉起服务（使用 Electron 自带的 Node，**不需要系统预装 Node**）；
+- 启动成功后自动打开默认浏览器；
+- 窗口里显示运行状态、端口、数据目录和日志；
+- 点「停止」或关闭窗口，会停止由启动器启动的服务。
+
+打包：
+
+```bash
+npm run desktop:build   # 生成未打包目录 release/win-unpacked（当前平台）
+npm run desktop:dist    # 生成安装包：Windows NSIS/portable、macOS dmg、Linux AppImage
+```
+
+三平台需要分别在对应系统上构建，产物在 `release/`（已 gitignore）。Electron 只是 `devDependencies`，普通命令行 `node server/index.mjs` 仍然可用，服务端依旧零运行时依赖。
+
 ## 持续集成
 
 `.github/workflows/ci.yml` 在 Ubuntu / macOS / Windows 三个平台跑同一套检查：

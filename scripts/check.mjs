@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const ROOTS = ['server', 'public', 'scripts', 'tools'];
+const ROOTS = ['server', 'public', 'scripts', 'tools', 'desktop'];
 const SKIP = new Set(['node_modules', '.git', 'vendor']);
 
 const files = [];
