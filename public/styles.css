@@ -216,6 +216,7 @@ button.badge.clickable:hover {
   border: 1px solid var(--line);
   background: var(--panel-2);
   color: var(--text-dim);
+  text-decoration: none;
   border-radius: var(--radius-sm);
   padding: 6px 12px;
   cursor: pointer;
@@ -1490,6 +1491,118 @@ button.badge.clickable:hover {
   .badge {
     display: none;
   }
+}
+
+/* -------------------------------- 单页外壳 -------------------------------- */
+
+#view-paper {
+  display: contents;
+}
+
+#view-kg {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  /* 显式单列：否则 grid 隐式列会按内容宽度撑破 fixed 容器 */
+  grid-template-columns: minmax(0, 1fr);
+}
+
+#view-kg[hidden] {
+  display: none;
+}
+
+html[data-view='kg'] #view-paper {
+  display: none;
+}
+
+.app-switch {
+  flex: none;
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 999px;
+}
+
+.app-switch button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: 0.62;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.app-switch button:hover {
+  opacity: 1;
+}
+
+.app-switch button.active {
+  background: var(--accent, #4da3ff);
+  color: #fff;
+  opacity: 1;
+}
+
+.library-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 52vh;
+  overflow: auto;
+  margin-top: 10px;
+}
+
+.lib-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  padding: 8px 10px;
+}
+
+.lib-open {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font: inherit;
+}
+
+.lib-open strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-open small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.lib-open:hover strong {
+  color: var(--accent);
+}
+
+.lib-del {
+  flex: none;
+}
+
+.quote-flash {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+  background: var(--accent-soft);
 }
 
 @media (prefers-reduced-motion: reduce) {

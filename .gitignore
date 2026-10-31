@@ -5,6 +5,16 @@ data/*.local.json
 .env.*
 *.pem
 
+# 本地数据（知识库 / 论文库 / 素材，绝不入库）
+data/graphs/
+data/backups/
+data/assets/
+data/papers/
+data/pdf/
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
 # 依赖与系统文件
 node_modules/
 .DS_Store

@@ -1,7 +1,14 @@
 /**
- * 模型配置存取。
- * 优先读取 data/config.json；没有落盘配置时回退到环境变量（适合部署场景）。
- * api_key 只存在于服务端，回传给前端时永远是被掩码的。
+ * 统一模型配置存取（PaperLens 精读 + 知识图谱共用）。
+ *
+ * 读取顺序：
+ *   1) ~/.paperlens/config.json（规范位置，自己保存的配置）
+ *   2) $PAPERLENS_DATA_DIR/config.json（旧版数据目录写法）
+ *   3) 仓库内 data/config.json（更早的版本，首次启动自动迁移）
+ *   4) ~/.kgraph/config.json（知识图谱旧配置，只读回退，不覆盖）
+ *   5) 环境变量（PAPERLENS_* 优先，KGRAPH_* 作为别名）
+ *
+ * api_key 只存在于服务端内存，回传给前端时永远是被掩码的。
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -9,16 +16,27 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decryptSecret, encryptSecret } from './secret.mjs';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-/** 运行时配置默认放在用户目录，避免 API Key 被误提交进仓库；可用环境变量覆盖 */
-export const DATA_DIR = path.resolve(
-  process.env.PAPERLENS_DATA_DIR || path.join(os.homedir(), '.paperlens'),
-);
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/** 配置与数据的根目录（默认 ~/.paperlens） */
+export const HOME_DIR = path.resolve(process.env.PAPERLENS_HOME || path.join(os.homedir(), '.paperlens'));
+/** 知识库 / 论文库 / 素材的落盘位置：默认 ~/.paperlens/data */
+export const DATA_DIR = path.resolve(process.env.PAPERLENS_DATA_DIR || path.join(HOME_DIR, 'data'));
+/** 规范配置文件 */
 const CONFIG_PATH = process.env.PAPERLENS_CONFIG
   ? path.resolve(process.env.PAPERLENS_CONFIG)
-  : path.join(DATA_DIR, 'config.json');
-/** 旧版本把配置放在仓库内，首次启动会自动迁移到上面的位置 */
+  : path.join(HOME_DIR, 'config.json');
+/** 旧版把配置放在数据目录下，继续兼容读取 */
+const LEGACY_DATA_CONFIG_PATH = path.join(DATA_DIR, 'config.json');
+/** 更早的版本把配置放在仓库内，首次启动会自动迁移 */
 const LEGACY_CONFIG_PATH = path.join(ROOT, 'data', 'config.json');
+/** 知识图谱旧配置：只读回退 */
+const KGRAPH_CONFIG_PATH = process.env.KGRAPH_CONFIG
+  ? path.resolve(process.env.KGRAPH_CONFIG)
+  : path.join(os.homedir(), '.kgraph', 'config.json');
+
+/** readFileConfig() 之后记录这份配置来自哪里 */
+let configOrigin = 'default';
 
 /** 常用服务商预设：都是 OpenAI 兼容端点，切模型只改三个字段 */
 export const PRESETS = {
@@ -77,45 +95,86 @@ export const DEFAULT_CONFIG = {
   temperature: PRESETS.deepseek.temperature,
   /** 原样合并进请求体，用于服务商私有开关（例如关闭深度思考） */
   extra_body: null,
+  /** 视觉模型（可选）：留空表示图片只归档、不做识别 */
+  vision_model: '',
+  vision_base_url: '',
+  vision_api_key: '',
 };
 
 const MAX_TOKENS_CAP = 131072;
 /** 配置结构版本：用于把旧配置迁移到更合理的默认值 */
-const CONFIG_VERSION = 3;
+const CONFIG_VERSION = 4;
 
 const MASK = '••••••••';
 
 /** 运行时解锁状态：明文 Key 只在内存里，不写盘 */
 let unlockedKey = '';
+let unlockedVisionKey = '';
 
 function envKey() {
-  return String(process.env.PAPERLENS_API_KEY || process.env.OPENAI_API_KEY || '').trim();
+  return String(
+    process.env.PAPERLENS_API_KEY || process.env.KGRAPH_API_KEY || process.env.OPENAI_API_KEY || '',
+  ).trim();
 }
 
-/** 从进程内存或 PAPERLENS_PASSPHRASE 解出密文里的 Key（都不可用时返回空） */
-function resolveEncryptedKey(file) {
-  if (!file?.api_key_enc) return '';
-  if (unlockedKey) return unlockedKey;
-  const pass = String(process.env.PAPERLENS_PASSPHRASE || '');
+/** 从进程内存或主密码环境变量解出密文里的 Key（都不可用时返回空） */
+function passphraseFromEnv() {
+  return String(process.env.PAPERLENS_PASSPHRASE || process.env.KGRAPH_PASSPHRASE || '');
+}
+
+function resolveEncryptedSecret(file, field, cache) {
+  if (!file?.[field]) return '';
+  if (cache.value) return cache.value;
+  const pass = passphraseFromEnv();
   if (!pass) return '';
-  const key = decryptSecret(file.api_key_enc, pass) || '';
-  if (key) unlockedKey = key;
+  const key = decryptSecret(file[field], pass) || '';
+  if (key) cache.value = key;
   return key;
+}
+
+const keyCache = { get value() { return unlockedKey; }, set value(v) { unlockedKey = v; } };
+const visionCache = { get value() { return unlockedVisionKey; }, set value(v) { unlockedVisionKey = v; } };
+
+function resolveEncryptedKey(file) {
+  return resolveEncryptedSecret(file, 'api_key_enc', keyCache);
+}
+
+function resolveEncryptedVisionKey(file) {
+  return resolveEncryptedSecret(file, 'vision_api_key_enc', visionCache);
 }
 
 /** 用主密码解锁（验证通过后只缓存在内存） */
 export function unlockConfig(passphrase) {
   const file = readFileConfig();
-  if (!file?.api_key_enc) return { ok: false, error: '当前没有加密的 API Key' };
-  const key = decryptSecret(file.api_key_enc, passphrase);
-  if (!key) return { ok: false, error: '主密码不正确' };
-  unlockedKey = key;
+  const pass = String(passphrase || '').trim();
+  if (!pass) return { ok: false, error: '请输入主密码' };
+  const hasKey = Boolean(file?.api_key_enc);
+  const hasVision = Boolean(file?.vision_api_key_enc);
+  if (!hasKey && !hasVision) return { ok: false, error: '当前没有加密的 API Key' };
+
+  let hit = false;
+  if (hasKey) {
+    const key = decryptSecret(file.api_key_enc, pass);
+    if (key) {
+      unlockedKey = key;
+      hit = true;
+    }
+  }
+  if (hasVision) {
+    const vkey = decryptSecret(file.vision_api_key_enc, pass);
+    if (vkey) {
+      unlockedVisionKey = vkey;
+      hit = true;
+    }
+  }
+  if (!hit) return { ok: false, error: '主密码不正确' };
   return { ok: true, config: publicConfig() };
 }
 
 /** 忘记主密码时只能清除 Key 后重设 */
 export function lockConfig() {
   unlockedKey = '';
+  unlockedVisionKey = '';
 }
 
 function readJson(file) {
@@ -130,32 +189,63 @@ function readJson(file) {
 
 function readFileConfig() {
   const current = readJson(CONFIG_PATH);
-  if (current) return current;
-  // 兼容旧版本：把仓库内的 data/config.json 自动迁移到用户目录
-  if (CONFIG_PATH === LEGACY_CONFIG_PATH) return null;
-  const legacy = readJson(LEGACY_CONFIG_PATH);
-  if (!legacy) return null;
-  try {
-    fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
-    fs.writeFileSync(CONFIG_PATH, `${JSON.stringify(legacy, null, 2)}\n`, 'utf8');
-    console.log(`  ➜  已把旧配置迁移到 ${CONFIG_PATH}（仓库内的 data/config.json 可以删除）`);
-  } catch {
-    /* 迁移失败也先用旧配置启动，不阻塞 */
+  if (current) {
+    configOrigin = 'file';
+    return current;
   }
-  return legacy;
+  // 旧版把配置放在数据目录下
+  if (LEGACY_DATA_CONFIG_PATH !== CONFIG_PATH) {
+    const dataCfg = readJson(LEGACY_DATA_CONFIG_PATH);
+    if (dataCfg) {
+      configOrigin = 'file';
+      return dataCfg;
+    }
+  }
+  // 更早的版本放在仓库内：自动迁移到用户目录
+  if (CONFIG_PATH !== LEGACY_CONFIG_PATH) {
+    const legacy = readJson(LEGACY_CONFIG_PATH);
+    if (legacy) {
+      try {
+        fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
+        fs.writeFileSync(CONFIG_PATH, `${JSON.stringify(legacy, null, 2)}\n`, 'utf8');
+        console.log(`  ➜  已把旧配置迁移到 ${CONFIG_PATH}（仓库内的 data/config.json 可以删除）`);
+      } catch {
+        /* 迁移失败也先用旧配置启动，不阻塞 */
+      }
+      configOrigin = 'file';
+      return legacy;
+    }
+  }
+  // 知识图谱的旧配置：只读回退，不覆盖
+  const kg = readJson(KGRAPH_CONFIG_PATH);
+  if (kg && (kg.api_key_enc || kg.api_key || kg.vision_api_key_enc || kg.vision_api_key)) {
+    configOrigin = 'kgraph';
+    return kg;
+  }
+  return null;
+}
+
+function envVisionKey() {
+  return String(
+    process.env.PAPERLENS_VISION_API_KEY || process.env.KGRAPH_VISION_API_KEY || '',
+  ).trim();
 }
 
 function fromEnv() {
   const env = process.env;
-  if (!env.PAPERLENS_API_KEY && !env.OPENAI_API_KEY) return null;
+  const apiKey = env.PAPERLENS_API_KEY || env.KGRAPH_API_KEY || env.OPENAI_API_KEY;
+  if (!apiKey) return null;
   const preset = DEFAULT_CONFIG;
   return {
-    provider: env.PAPERLENS_PROVIDER || preset.provider,
-    base_url: env.PAPERLENS_BASE_URL || env.OPENAI_BASE_URL || preset.base_url,
-    model: env.PAPERLENS_MODEL || env.OPENAI_MODEL || preset.model,
-    api_key: env.PAPERLENS_API_KEY || env.OPENAI_API_KEY,
-    max_tokens: Number(env.PAPERLENS_MAX_TOKENS || preset.max_tokens),
-    temperature: Number(env.PAPERLENS_TEMPERATURE || preset.temperature),
+    provider: env.PAPERLENS_PROVIDER || env.KGRAPH_PROVIDER || preset.provider,
+    base_url: env.PAPERLENS_BASE_URL || env.KGRAPH_BASE_URL || env.OPENAI_BASE_URL || preset.base_url,
+    model: env.PAPERLENS_MODEL || env.KGRAPH_MODEL || env.OPENAI_MODEL || preset.model,
+    api_key: apiKey,
+    max_tokens: Number(env.PAPERLENS_MAX_TOKENS || env.KGRAPH_MAX_TOKENS || preset.max_tokens),
+    temperature: Number(env.PAPERLENS_TEMPERATURE || env.KGRAPH_TEMPERATURE || preset.temperature),
+    vision_model: env.PAPERLENS_VISION_MODEL || env.KGRAPH_VISION_MODEL || '',
+    vision_base_url: env.PAPERLENS_VISION_BASE_URL || env.KGRAPH_VISION_BASE_URL || '',
+    vision_api_key: envVisionKey(),
   };
 }
 
@@ -200,22 +290,34 @@ function normalizeExtraBody(value) {
 /** 内部用：含明文 key */
 export function loadConfig() {
   const file = readFileConfig();
-  const base = file || fromEnv() || DEFAULT_CONFIG;
+  const env = fromEnv();
+  const base = file || env || DEFAULT_CONFIG;
   const cfg = { ...DEFAULT_CONFIG, ...base };
   cfg.max_tokens = normalizeMaxTokens(cfg.max_tokens, DEFAULT_CONFIG.max_tokens);
   cfg.temperature = clampNum(cfg.temperature, 0, 2, DEFAULT_CONFIG.temperature);
   cfg.base_url = String(cfg.base_url || '').trim();
   cfg.model = String(cfg.model || '').trim();
-  if (file?.api_key_enc) {
-    // 密文：优先用内存里已解锁的 Key，其次 PAPERLENS_PASSPHRASE，最后环境变量
-    const key = resolveEncryptedKey(file) || envKey();
-    cfg.api_key = key;
-    cfg.locked = !key;
+  cfg.vision_model = String(cfg.vision_model || '').trim();
+  cfg.vision_base_url = String(cfg.vision_base_url || '').trim();
+
+  if (file) {
+    // 密文：优先用内存里已解锁的 Key，其次主密码环境变量，最后环境变量
+    cfg.api_key =
+      (file.api_key_enc ? resolveEncryptedKey(file) : String(file.api_key || '').trim()) || envKey();
+    cfg.locked = Boolean(file.api_key_enc) && !cfg.api_key;
+    cfg.vision_api_key =
+      (file.vision_api_key_enc
+        ? resolveEncryptedVisionKey(file)
+        : String(file.vision_api_key || '').trim()) || envVisionKey();
+    cfg.vision_locked = Boolean(file.vision_api_key_enc) && !cfg.vision_api_key;
   } else {
     cfg.api_key = String(cfg.api_key || '').trim();
+    cfg.vision_api_key = String(cfg.vision_api_key || '').trim();
     cfg.locked = false;
+    cfg.vision_locked = false;
   }
   delete cfg.api_key_enc;
+  delete cfg.vision_api_key_enc;
   cfg.provider = String(cfg.provider || DEFAULT_CONFIG.provider).trim();
 
   // 地址和服务商对不上时以地址为准（改地址忘了换 provider 是最常见的配置错误）
@@ -228,7 +330,16 @@ export function loadConfig() {
     cfg.extra_body = null;
   }
 
-  if (file) migrateInPlace(cfg);
+  cfg.ready = Boolean(cfg.base_url && cfg.model && cfg.api_key);
+  cfg.vision_ready = Boolean(
+    (cfg.vision_base_url || cfg.base_url) && cfg.vision_model && (cfg.vision_api_key || cfg.api_key),
+  );
+  cfg.source = file ? configOrigin : env ? 'env' : 'default';
+  cfg.encrypted = Boolean(file?.api_key_enc);
+  cfg.config_path = CONFIG_PATH;
+  cfg.data_dir = DATA_DIR;
+
+  if (file) migrateInPlace(cfg, file);
   return cfg;
 }
 
@@ -236,8 +347,8 @@ export function loadConfig() {
  * 旧版本把 max_tokens 硬编码成 4096 / 8192，会截断长精读。
  * v3 起默认不发送该字段（由模型决定），这里把历史默认值清掉。
  */
-function migrateInPlace(cfg) {
-  const version = Number(cfg.config_version || 1);
+function migrateInPlace(cfg, file) {
+  const version = Number(cfg.config_version || file?.config_version || 1);
   if (version >= CONFIG_VERSION) return;
   if (version < 3) {
     const current = Number(cfg.max_tokens);
@@ -248,9 +359,11 @@ function migrateInPlace(cfg) {
   cfg.config_version = CONFIG_VERSION;
   try {
     // 基于磁盘上的原始内容写回，避免把内存里的解密 Key 落成明文
-    const raw = readJson(CONFIG_PATH) || {};
+    const raw = file ? { ...file } : readJson(CONFIG_PATH) || {};
     const next = { ...raw, max_tokens: cfg.max_tokens, config_version: CONFIG_VERSION };
     if (next.api_key_enc) delete next.api_key;
+    if (next.vision_api_key_enc) delete next.vision_api_key;
+    fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
     fs.writeFileSync(CONFIG_PATH, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
   } catch {
     /* 写不进去也不影响本次读取 */
@@ -267,13 +380,19 @@ export function publicConfig() {
     max_tokens: cfg.max_tokens,
     temperature: cfg.temperature,
     extra_body: cfg.extra_body,
+    vision_model: cfg.vision_model,
+    vision_base_url: cfg.vision_base_url,
     has_key: Boolean(cfg.api_key),
+    has_vision_key: Boolean(cfg.vision_api_key),
     api_key_masked: cfg.api_key ? MASK : '',
     locked: Boolean(cfg.locked),
-    ready: Boolean(cfg.base_url && cfg.model && cfg.api_key),
-    source: readFileConfig() ? 'file' : fromEnv() ? 'env' : 'default',
-    encrypted: Boolean(readFileConfig()?.api_key_enc),
+    vision_locked: Boolean(cfg.vision_locked),
+    ready: Boolean(cfg.ready),
+    vision_ready: Boolean(cfg.vision_ready),
+    source: cfg.source,
+    encrypted: Boolean(cfg.encrypted),
     config_path: CONFIG_PATH,
+    data_dir: DATA_DIR,
   };
 }
 
@@ -292,6 +411,10 @@ export function saveConfig(patch = {}) {
   if (patch.max_tokens !== undefined) next.max_tokens = normalizeMaxTokens(patch.max_tokens, next.max_tokens);
   if (patch.temperature !== undefined) next.temperature = clampNum(patch.temperature, 0, 2, current.temperature);
   if (patch.extra_body !== undefined) next.extra_body = normalizeExtraBody(patch.extra_body);
+  if (typeof patch.vision_model === 'string') next.vision_model = patch.vision_model.trim();
+  if (typeof patch.vision_base_url === 'string') {
+    next.vision_base_url = patch.vision_base_url.trim().replace(/\/+$/, '');
+  }
 
   // 地址一变就重新识别服务商，顺手补上该服务商的默认模型名
   const detected = detectProvider(next.base_url);
@@ -319,6 +442,26 @@ export function saveConfig(patch = {}) {
     }
   }
 
+  // 视觉模型 Key：空串表示清除（与知识图谱侧原有语义一致）
+  if (patch.clear_vision_key) {
+    delete next.vision_api_key_enc;
+    delete next.vision_api_key;
+    unlockedVisionKey = '';
+  } else if (typeof patch.vision_api_key === 'string') {
+    const incoming = patch.vision_api_key.trim();
+    const isMasked = incoming.includes('•') || /^\*+$/.test(incoming);
+    if (incoming && !isMasked) {
+      if (!passphrase) throw new Error('保存视觉模型 Key 需要同时设置主密码（用于加密存储）');
+      next.vision_api_key_enc = encryptSecret(incoming, passphrase);
+      delete next.vision_api_key;
+      unlockedVisionKey = incoming;
+    } else if (!incoming) {
+      delete next.vision_api_key_enc;
+      delete next.vision_api_key;
+      unlockedVisionKey = '';
+    }
+  }
+
   // 没有提交新 Key，但提供了主密码：解锁已有密文，或把历史明文迁移成密文
   if (!savedNewKey && passphrase) {
     if (next.api_key_enc) {
@@ -332,13 +475,42 @@ export function saveConfig(patch = {}) {
       unlockedKey = plain;
     }
   }
+  if (passphrase) {
+    if (next.vision_api_key_enc && !unlockedVisionKey) {
+      const vkey = decryptSecret(next.vision_api_key_enc, passphrase);
+      if (!vkey) throw new Error('主密码不正确');
+      unlockedVisionKey = vkey;
+    } else if (!next.vision_api_key_enc && next.vision_api_key) {
+      const plain = String(next.vision_api_key);
+      next.vision_api_key_enc = encryptSecret(plain, passphrase);
+      delete next.vision_api_key;
+      unlockedVisionKey = plain;
+    }
+  }
 
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
   const toWrite = { ...next, config_version: CONFIG_VERSION };
-  delete toWrite.locked;
+  // 运行时字段不落盘
+  for (const key of [
+    'locked',
+    'vision_locked',
+    'ready',
+    'vision_ready',
+    'source',
+    'encrypted',
+    'config_path',
+    'data_dir',
+    'has_key',
+    'has_vision_key',
+    'api_key_masked',
+  ]) {
+    delete toWrite[key];
+  }
   // 有密文时绝不写明文；Key 为空也不保留字段
   if (toWrite.api_key_enc) delete toWrite.api_key;
+  if (toWrite.vision_api_key_enc) delete toWrite.vision_api_key;
   if (!toWrite.api_key || !String(toWrite.api_key).trim()) delete toWrite.api_key;
+  if (!toWrite.vision_api_key || !String(toWrite.vision_api_key).trim()) delete toWrite.vision_api_key;
   fs.writeFileSync(CONFIG_PATH, `${JSON.stringify(toWrite, null, 2)}\n`, 'utf8');
   return publicConfig();
 }

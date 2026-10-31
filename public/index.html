@@ -3,15 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PaperLens · 论文精读工作台</title>
+    <title>PaperLens · 论文精读 + 知识图谱</title>
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/kg/styles.scoped.css" />
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234da3ff'/%3E%3Cpath d='M9 22V10h8a4 4 0 0 1 0 8h-4' stroke='white' stroke-width='2.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"
     />
   </head>
   <body>
+    <div id="view-paper">
     <header class="topbar">
+      <nav class="app-switch" data-app-switch aria-label="切换视图">
+        <button type="button" data-view="paper" class="active">精读</button>
+        <button type="button" data-view="kg">知识图谱</button>
+      </nav>
       <div class="brand">
         <span class="brand-mark">◈</span>
         <div class="brand-text">
@@ -85,6 +91,7 @@
           <span id="reading-status" class="pane-meta"></span>
           <div class="pane-tools">
             <button id="btn-copy-reading" class="btn tiny" type="button">复制</button>
+            <button id="btn-to-graph" class="btn tiny" type="button" title="把论文、精读与概念推送到知识图谱">→ 知识图谱</button>
             <button id="btn-export-report" class="btn tiny" type="button" title="把精读、图解与追问导出为 PDF 报告">导出报告</button>
             <button id="btn-rerun" class="btn tiny" type="button">重跑</button>
           </div>
@@ -146,6 +153,7 @@
           <button type="button" class="seg active" data-tab="arxiv">arXiv</button>
           <button type="button" class="seg" data-tab="paste">粘贴正文</button>
           <button type="button" class="seg" data-tab="upload">上传文件</button>
+          <button type="button" class="seg" data-tab="library">论文库</button>
         </div>
 
         <div class="tab-panel" data-tab="arxiv">
@@ -173,9 +181,14 @@
           <label class="dropzone" id="dropzone">
             <input type="file" id="file-input" accept=".txt,.md,.markdown,.pdf" hidden />
             <strong>点击选择，或把文件拖到这里</strong>
-            <span>.txt / .md / .pdf（PDF 在浏览器本地解析，不上传服务器）</span>
+            <span>.txt / .md / .pdf（PDF 在浏览器本地解析，并存入本机论文库）</span>
           </label>
           <p class="hint" id="upload-status"></p>
+        </div>
+
+        <div class="tab-panel" data-tab="library" hidden>
+          <p class="hint">论文库保存在本机，切换浏览器或重启服务后仍可打开；精读结果会随论文一起保存。</p>
+          <div id="library-list" class="library-list"></div>
         </div>
 
         <div class="dialog-foot">
@@ -319,6 +332,318 @@
 
     <div id="toast" class="toast" hidden></div>
 
+    </div>
+
+    <div id="view-kg" class="kg-view" hidden>
+
+    <header class="topbar">
+      <nav class="app-switch" data-app-switch aria-label="切换视图">
+        <button type="button" data-view="paper" class="active">精读</button>
+        <button type="button" data-view="kg">知识图谱</button>
+      </nav>
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <button id="kg-graph-switch" class="graph-switch" type="button" title="切换 / 管理知识图谱">
+          <span id="kg-graph-name">我的知识库</span>
+          <span class="graph-caret">▾</span>
+        </button>
+      </div>
+
+      <div class="search">
+        <input id="kg-search" type="search" placeholder="搜索知识点、摘要、标签（Ctrl+K）" autocomplete="off" />
+        <span id="kg-search-count" class="search-count"></span>
+      </div>
+
+      <div class="stats" id="kg-stats"></div>
+
+      <div class="actions">
+        <button id="kg-btn-import" class="btn primary">＋ 导入资料</button>
+        <button id="kg-btn-settings" class="btn ghost" title="模型设置">模型设置</button>
+        <button id="kg-btn-theme" class="btn ghost icon" title="切换亮色 / 暗色">◐</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="rail">
+        <div class="rail-tabs seg-group" role="tablist">
+          <button class="seg active" data-tab="concepts">概念</button>
+          <button class="seg" data-tab="sources">资料</button>
+          <button class="seg" data-tab="topics">分区</button>
+        </div>
+        <div class="rail-list" id="kg-rail-list"></div>
+        <div class="rail-foot">
+          <span id="kg-rail-foot-note">按前置关系排序，点一下定位</span>
+          <button id="kg-btn-reextract-all" class="link" title="对没抽过概念的资料重新抽取">补抽取</button>
+        </div>
+      </aside>
+
+      <section class="stage">
+        <div class="stage-toolbar">
+          <div class="seg-group">
+            <button class="seg active" data-mode="dag" title="按前置关系分层：从左到右就是学习顺序">分层图</button>
+            <button class="seg" data-mode="mind" title="以某个知识点为根，一键生成思维导图">思维导图</button>
+            <button class="seg" data-mode="star" title="3D 星空视图：拖拽旋转，滚轮推近拉远">星空</button>
+          </div>
+          <button
+            id="kg-btn-toggle-stubs"
+            class="btn ghost small"
+            type="button"
+            title="待补全 = 模型提出、但还没有解释的前置概念；默认隐藏，避免把图挤乱"
+          >
+            显示待补全
+          </button>
+          <button id="kg-filter-chip" class="filter-chip" type="button" hidden title="点击清除筛选"></button>
+          <div class="stage-hint" id="kg-stage-hint">拖拽平移 · 滚轮缩放 · 点击看详情 · Shift 点两个看通路 · 双击设为根</div>
+          <div class="stage-tools">
+            <button id="kg-btn-clear-path" class="btn ghost small" hidden>清除路径</button>
+            <button id="kg-btn-zoom-out" class="btn ghost icon" title="缩小">−</button>
+            <span id="kg-zoom-label" class="zoom-label">100%</span>
+            <button id="kg-btn-zoom-in" class="btn ghost icon" title="放大">＋</button>
+            <button id="kg-btn-fit" class="btn ghost small" title="适应窗口">适应</button>
+            <button id="kg-btn-export-svg" class="btn ghost small" title="导出矢量图">SVG</button>
+            <button id="kg-btn-export-png" class="btn ghost small" title="导出位图">PNG</button>
+          </div>
+        </div>
+
+        <div class="canvas-wrap" id="kg-canvas-wrap">
+          <svg id="kg-graph" role="img" aria-label="知识图谱画布"></svg>
+          <canvas id="kg-star-canvas" class="star-canvas" hidden></canvas>
+          <div class="legend" id="kg-legend" hidden>
+            <span><i class="legend-line"></i>前置</span>
+            <span><i class="legend-line is-extends"></i>延伸</span>
+            <span><i class="legend-line is-related"></i>并列</span>
+            <span><i class="legend-line is-flow"></i>流程</span>
+          </div>
+          <div class="empty-graph" id="kg-empty-graph">
+            <h2>把资料变成一张能查的图</h2>
+            <p>导入论文正文、网页链接或图片，模型抽出概念与前置关系；每条结论都带原文出处。</p>
+            <div class="empty-actions">
+              <button class="btn primary" data-action="open-import">导入资料</button>
+              <button class="btn ghost" data-action="load-demo">看看示例图谱</button>
+            </div>
+            <p class="empty-note">没有配模型也能用：示例图谱、手工建点、导入后补抽取都支持。</p>
+          </div>
+        </div>
+      </section>
+
+      <aside class="detail" id="kg-detail">
+        <div class="detail-empty">
+          <h3>知识点详情</h3>
+          <p>点任意一个知识点：它的定义、前置链路、以及每条结论对应的原文出处都会显示在这里。</p>
+        </div>
+      </aside>
+    </main>
+
+    <!-- 导入资料 -->
+    <dialog id="kg-import-dialog" class="dialog">
+      <div class="dialog-head">
+        <h3>导入资料</h3>
+        <button class="btn ghost icon" data-close>✕</button>
+      </div>
+      <div class="dialog-body">
+        <div class="seg-group wide" role="tablist">
+          <button class="seg active" data-pane-btn="text">粘贴文本 / 论文正文</button>
+          <button class="seg" data-pane-btn="web">网页 / arXiv 链接</button>
+          <button class="seg" data-pane-btn="image">图片</button>
+        </div>
+
+        <section data-pane="text">
+          <label class="field">
+            <span>标题（可选）</span>
+            <input id="kg-import-title" placeholder="例如：Attention Is All You Need" />
+          </label>
+          <label class="field">
+            <span>正文</span>
+            <textarea id="kg-import-text" rows="11" placeholder="粘贴论文正文、精读笔记、教材节选…"></textarea>
+          </label>
+          <p class="hint">PDF 论文更省事的做法：在 PaperLens 读完点「→ 生成知识图谱」，精读结果会带出处直接推进来。</p>
+        </section>
+
+        <section data-pane="web" hidden>
+          <label class="field">
+            <span>链接</span>
+            <input id="kg-import-url" placeholder="https://arxiv.org/abs/1706.03762 或任意文章链接" />
+          </label>
+          <p class="hint">服务端会抓取正文（arXiv 会先取摘要再尽量取 HTML 全文）。纯前端渲染的页面可能抓不到，那就粘贴正文。</p>
+        </section>
+
+        <section data-pane="image" hidden>
+          <label class="field">
+            <span>图片</span>
+            <input id="kg-import-image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+          </label>
+          <div id="kg-image-preview" class="image-preview" hidden></div>
+          <label class="field">
+            <span>或者直接粘贴图里的文字（可留空）</span>
+            <textarea id="kg-import-image-text" rows="4" placeholder="不想用视觉模型的话，把图片里的要点贴在这里"></textarea>
+          </label>
+          <p class="hint">配了视觉模型就自动转写；没配则只把图片归档成素材，不出概念。</p>
+        </section>
+
+        <div class="import-status" id="kg-import-status"></div>
+      </div>
+      <div class="dialog-foot">
+        <button class="btn ghost" id="kg-btn-load-demo">加载示例图谱</button>
+        <div class="grow"></div>
+        <button class="btn ghost" data-close>取消</button>
+        <button class="btn primary" id="kg-btn-import-run">生成知识图谱</button>
+      </div>
+    </dialog>
+
+    <!-- 模型设置 -->
+    <dialog id="kg-settings-dialog" class="dialog">
+      <div class="dialog-head">
+        <h3>模型设置</h3>
+        <button class="btn ghost icon" data-close>✕</button>
+      </div>
+      <div class="dialog-body">
+        <div class="seg-group wide" id="kg-preset-row"></div>
+
+        <label class="field">
+          <span>Base URL（OpenAI 兼容端点，一般以 /v1 结尾）</span>
+          <input id="kg-cfg-base-url" placeholder="https://api.deepseek.com/v1" />
+        </label>
+        <label class="field">
+          <span>模型名</span>
+          <input id="kg-cfg-model" placeholder="deepseek-v4-flash" list="model-options" />
+          <datalist id="kg-model-options"></datalist>
+        </label>
+        <label class="field">
+          <span>API Key（只写不读回，加密存在本机）</span>
+          <input id="kg-cfg-api-key" type="password" placeholder="sk-..." autocomplete="off" />
+        </label>
+        <div class="field-row">
+          <label class="field">
+            <span>主密码（保存 / 解锁 Key 用，至少 6 位）</span>
+            <input id="kg-cfg-passphrase" type="password" placeholder="不落盘" autocomplete="off" />
+          </label>
+          <label class="field narrow">
+            <span>max_tokens（留空 = 由模型决定）</span>
+            <input id="kg-cfg-max-tokens" placeholder="留空" />
+          </label>
+        </div>
+
+        <details class="advanced">
+          <summary>视觉模型（可选，用来读图片资料）</summary>
+          <label class="field">
+            <span>视觉模型名（留空 = 图片只归档）</span>
+            <input id="kg-cfg-vision-model" placeholder="例如 gpt-4o-mini / qwen2.5-vl" />
+          </label>
+          <label class="field">
+            <span>视觉模型 Base URL（留空 = 同上）</span>
+            <input id="kg-cfg-vision-base-url" placeholder="留空则复用上面的端点" />
+          </label>
+          <label class="field">
+            <span>视觉模型 Key（留空则复用上面的 Key）</span>
+            <input id="kg-cfg-vision-key" type="password" autocomplete="off" />
+          </label>
+        </details>
+
+        <div class="config-note" id="kg-config-note"></div>
+        <div class="config-note" id="kg-storage-note"></div>
+        <div class="field-row">
+          <button class="btn ghost small" id="kg-btn-export-library" type="button">导出知识库 JSON</button>
+          <button class="btn ghost small" id="kg-btn-toggle-fts" type="button">开启 FTS5 加速</button>
+        </div>
+        <div class="settings-status" id="kg-settings-status"></div>
+      </div>
+      <div class="dialog-foot">
+        <button class="btn ghost" id="kg-btn-unlock">解锁已保存的 Key</button>
+        <div class="grow"></div>
+        <button class="btn ghost" id="kg-btn-test">测试连接</button>
+        <button class="btn primary" id="kg-btn-save-config">保存</button>
+      </div>
+    </dialog>
+
+    <!-- 图谱（工作区）管理 -->
+    <dialog id="kg-graphs-dialog" class="dialog">
+      <div class="dialog-head">
+        <h3>知识图谱</h3>
+        <button class="btn ghost icon" data-close>✕</button>
+      </div>
+      <div class="dialog-body">
+        <div class="graph-list" id="kg-graph-list"></div>
+        <div class="field-row">
+          <label class="field">
+            <span>新建图谱</span>
+            <input id="kg-graph-new-name" placeholder="例如：视觉 SLAM / 语义分割 / 某门课" />
+          </label>
+          <button class="btn primary" id="kg-btn-graph-create" type="button" style="align-self: flex-end">新建</button>
+        </div>
+        <p class="hint">
+          每个图谱都是一个独立的库：资料、概念、关系、布局互不影响。切换图谱就是换一个视角，导入的资料落到当前图谱里。
+        </p>
+        <div class="settings-status" id="kg-graph-status"></div>
+      </div>
+      <div class="dialog-foot">
+        <div class="grow"></div>
+        <button class="btn ghost" data-close>关闭</button>
+      </div>
+    </dialog>
+
+    <!-- 资料正文 -->
+    <dialog id="kg-source-dialog" class="dialog wide-dialog">
+      <div class="dialog-head">
+        <h3 id="kg-source-dialog-title">资料正文</h3>
+        <button class="btn ghost icon" data-close>✕</button>
+      </div>
+      <div class="dialog-body">
+        <pre class="source-text" id="kg-source-dialog-text"></pre>
+      </div>
+      <div class="dialog-foot">
+        <button class="btn ghost" id="kg-btn-reextract">重新抽取这份资料</button>
+        <div class="grow"></div>
+        <button class="btn ghost" data-close>关闭</button>
+      </div>
+    </dialog>
+
+    <!-- 添加关系 -->
+    <dialog id="kg-edge-dialog" class="dialog">
+      <div class="dialog-head">
+        <h3>添加关系</h3>
+        <button class="btn ghost icon" data-close>✕</button>
+      </div>
+      <div class="dialog-body">
+        <p class="hint" id="kg-edge-dialog-note"></p>
+        <label class="field">
+          <span>起点（前置 / 来源）</span>
+          <select id="kg-edge-from"></select>
+        </label>
+        <label class="field">
+          <span>终点（延伸 / 目标）</span>
+          <select id="kg-edge-to"></select>
+        </label>
+        <div class="field-row">
+          <label class="field">
+            <span>关系类型</span>
+            <select id="kg-edge-type">
+              <option value="prereq">前置（学它之前要先学）</option>
+              <option value="extends">延伸（在它基础上发展）</option>
+              <option value="related">并列（相关概念）</option>
+              <option value="flow">流程（处理先后）</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>说明（可选）</span>
+            <input id="kg-edge-label" placeholder="例如：决定加速度" />
+          </label>
+        </div>
+        <div class="settings-status" id="kg-edge-status"></div>
+      </div>
+      <div class="dialog-foot">
+        <div class="grow"></div>
+        <button class="btn ghost" data-close>取消</button>
+        <button class="btn primary" id="kg-btn-save-edge">保存关系</button>
+      </div>
+    </dialog>
+
+    <div class="toast" id="kg-toast" hidden></div>
+    
+  
+    </div>
+
     <script type="module" src="/app.js"></script>
+    <script type="module" src="/kg/app.js"></script>
+    <script type="module" src="/shell.js"></script>
   </body>
 </html>

@@ -1,97 +1,51 @@
 /**
- * PaperLens 服务端入口：零依赖 Node HTTP 服务。
+ * PaperLens 统一服务端入口：零依赖 Node HTTP 服务。
+ * 精读（/api/*）与知识图谱（/api/kg/*）共用一个进程、一份模型配置。
  * 只监听 127.0.0.1，API Key 不出本机。
  */
 import http from 'node:http';
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { loadConfig, publicConfig, saveConfig, unlockConfig, PRESETS } from './config.mjs';
-import { streamChat, completeChat, extractJson, testConnection, LlmError } from './llm.mjs';
+import { DATA_DIR, loadConfig, publicConfig, saveConfig, unlockConfig, PRESETS } from './shared/config.mjs';
+import { streamChat, completeChat, extractJson, testConnection, LlmError } from './shared/llm.mjs';
+import { HttpError, sendJson, readBody, openSse, sleep, serveStatic } from './shared/http.mjs';
+import { handleKgApi } from './kg/routes.mjs';
+import { handlePaperApi } from './paper/routes.mjs';
 import { readingMessages, structureMessages, askMessages, summaryMessages } from './prompts.mjs';
 import { fetchArxivPaper } from './paper.mjs';
 import { SAMPLE_PAPER, DEMO_READING, DEMO_STRUCTURE, DEMO_ASK } from './samples.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC_DIR = path.join(ROOT, 'public');
+const KG_PUBLIC_DIR = path.join(PUBLIC_DIR, 'kg');
 const PORT = Number(process.env.PORT || 5173);
 const HOST = process.env.HOST || '127.0.0.1';
-const MAX_BODY = 12 * 1024 * 1024;
 
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.ico': 'image/x-icon',
-  '.woff2': 'font/woff2',
-};
+/** 知识图谱旧路径：同源后前端改用 /api/kg/*，这些只用于兼容旧脚本与旧书签 */
+const KG_LEGACY_EXACT = new Set([
+  '/api/state',
+  '/api/health',
+  '/api/search',
+  '/api/storage',
+  '/api/import',
+  '/api/import/paperlens',
+  '/api/import/library.json',
+  '/api/export/library.json',
+  '/api/layout',
+  '/api/view',
+  '/api/fts',
+  '/api/library/clear',
+  '/api/demo/load',
+]);
+const KG_LEGACY_PREFIX = ['/api/graphs', '/api/sources', '/api/concepts', '/api/edges'];
 
-/* ---------------------------------- 工具 ---------------------------------- */
-
-function sendJson(res, status, payload) {
-  const body = JSON.stringify(payload);
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(body),
-    'Cache-Control': 'no-store',
-  });
-  res.end(body);
+function isKgLegacyPath(pathname) {
+  return (
+    KG_LEGACY_EXACT.has(pathname) ||
+    KG_LEGACY_PREFIX.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
+  );
 }
-
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let size = 0;
-    req.on('data', (chunk) => {
-      size += chunk.length;
-      if (size > MAX_BODY) {
-        reject(new Error('请求体过大（上限 12MB）'));
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on('end', () => {
-      const raw = Buffer.concat(chunks).toString('utf8');
-      if (!raw) return resolve({});
-      try {
-        resolve(JSON.parse(raw));
-      } catch {
-        reject(new Error('请求体不是合法 JSON'));
-      }
-    });
-    req.on('error', reject);
-  });
-}
-
-function openSse(res) {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache, no-transform',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-  if (typeof res.flushHeaders === 'function') res.flushHeaders();
-  return {
-    event(type, data) {
-      if (res.writableEnded) return false;
-      res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
-      return true;
-    },
-    end() {
-      if (res.writableEnded) return;
-      res.write('event: end\ndata: [DONE]\n\n');
-      res.end();
-    },
-  };
-}
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** demo 模式：把固定文本切片后模拟流式，让前端交互与真实调用完全一致 */
 async function streamDemo(sse, text, { chunkSize = 14, delay = 14 } = {}) {
@@ -112,13 +66,6 @@ function paperOf(body) {
 function requirePaper(paper) {
   if (!paper.text) throw new HttpError(400, '没有论文内容，请先粘贴正文或上传文件');
   if (paper.text.length < 60) throw new HttpError(400, '论文内容太短，至少需要 60 个字符才能精读');
-}
-
-class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
 }
 
 /* -------------------------------- 路由处理 -------------------------------- */
@@ -461,28 +408,6 @@ async function handleTestConfig(req, res) {
   }
 }
 
-/* --------------------------------- 静态文件 -------------------------------- */
-
-function serveStatic(req, res, pathname) {
-  const rel = pathname === '/' ? 'index.html' : decodeURIComponent(pathname).replace(/^\/+/, '');
-  const filePath = path.join(PUBLIC_DIR, rel);
-  if (!filePath.startsWith(PUBLIC_DIR)) {
-    res.writeHead(403).end('Forbidden');
-    return;
-  }
-  fs.readFile(filePath, (err, data) => {
-    if (err) {
-      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('404 Not Found');
-      return;
-    }
-    res.writeHead(200, {
-      'Content-Type': MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream',
-      'Cache-Control': 'no-cache',
-    });
-    res.end(data);
-  });
-}
-
 /* ---------------------------------- 主循环 --------------------------------- */
 
 const server = http.createServer(async (req, res) => {
@@ -490,6 +415,25 @@ const server = http.createServer(async (req, res) => {
   const { pathname } = url;
 
   try {
+    // 知识图谱：新前缀 /api/kg/*、旧路径别名、图片素材 /assets/*
+    if (pathname.startsWith('/api/kg/') || isKgLegacyPath(pathname) || pathname.startsWith('/assets/')) {
+      if (await handleKgApi(req, res, url)) return;
+    }
+
+    // 旧的图谱地址统一收口到单页外壳；/kg/* 仍用于加载图谱自己的资源
+    if (pathname === '/kg' || pathname === '/kg/' || pathname === '/kg/index.html') {
+      const extra = url.search ? `&${url.search.slice(1)}` : '';
+      res.writeHead(302, { Location: `/?view=kg${extra}` });
+      return res.end();
+    }
+    if (pathname.startsWith('/kg/')) {
+      return serveStatic(res, KG_PUBLIC_DIR, pathname.slice('/kg'.length));
+    }
+
+    if (pathname.startsWith('/api/paper/') && pathname !== '/api/paper/fetch') {
+      if (await handlePaperApi(req, res, url)) return;
+    }
+
     if (pathname.startsWith('/api/')) {
       const key = `${req.method} ${pathname}`;
       switch (key) {
@@ -521,7 +465,7 @@ const server = http.createServer(async (req, res) => {
           return sendJson(res, 404, { ok: false, error: `未知接口 ${key}` });
       }
     }
-    serveStatic(req, res, pathname);
+    serveStatic(res, PUBLIC_DIR, pathname);
   } catch (err) {
     if (res.headersSent) {
       try {
@@ -538,13 +482,15 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   const cfg = publicConfig();
-  console.log(`\n  PaperLens · 论文精读工作台`);
-  console.log(`  ➜  http://${HOST}:${PORT}`);
+  console.log(`\n  PaperLens · 论文精读 + 知识图谱`);
+  console.log(`  ➜  精读工作台：http://${HOST}:${PORT}/`);
+  console.log(`  ➜  知识图谱：  http://${HOST}:${PORT}/kg/`);
   const modelLine = cfg.locked
     ? 'API Key 已加密（未解锁）—— 在「模型设置」输入主密码，或设置 PAPERLENS_PASSPHRASE'
     : cfg.has_key
-      ? `${cfg.model} (${cfg.provider})`
+      ? `${cfg.model} (${cfg.provider})${cfg.vision_ready ? ' + 视觉模型' : ''}`
       : '未配置 API Key —— 当前为 demo 模式（内置示例数据）';
   console.log(`  ➜  模型：${modelLine}`);
+  console.log(`  ➜  数据目录：${DATA_DIR}`);
   console.log(`  ➜  配置文件：${cfg.config_path}\n`);
 });
