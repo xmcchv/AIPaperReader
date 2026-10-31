@@ -285,6 +285,21 @@ ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIE
 PAPERLENS_INSECURE_TLS=1 npm run desktop:dist
 ```
 
+## 自动发版
+
+推送 `v*` tag 会自动构建 Windows / macOS / Linux 三平台安装包，并发布到 GitHub Releases：
+
+```bash
+git tag v2.1.0
+git push origin v2.1.0
+```
+
+- 构建前会校验 tag 与 `package.json` 的 `version` 一致
+- Windows：`PaperLens Setup 2.1.0.exe` + `PaperLens 2.1.0.exe`
+- macOS：`PaperLens-2.1.0*.dmg`（未签名，首次打开需右键「打开」）
+- Linux：`PaperLens-2.1.0*.AppImage`
+- 手动触发 `Desktop build` 只上传 artifacts，不创建 Release
+
 ## 持续集成
 
 `.github/workflows/ci.yml` 在 Ubuntu / macOS / Windows 三个平台跑同一套检查：

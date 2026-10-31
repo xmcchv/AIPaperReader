@@ -19,5 +19,11 @@ data/*.db-wal
 node_modules/
 release/
 dist/
+out/
+coverage/
+.reasonix/
+tmp/
+*.log
+npm-debug.log*
 .DS_Store
 Thumbs.db
