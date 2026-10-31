@@ -13,7 +13,7 @@ node server/index.mjs
 
 （`server/index.js` 是等价别名。端口被占用时换一个：PowerShell 写 `$env:PORT=5175; node server/index.mjs`，bash 写 `PORT=5175 node server/index.mjs`。）
 
-需要 **Node ≥ 22.5**（论文库与知识图谱使用 Node 内置的 `node:sqlite`，仍然零依赖）。没有安装步骤，也没有 `npm install`：服务端只用 Node 内置模块，前端是原生 HTML/CSS/ESM。
+需要 **Node ≥ 22.5**（论文库与知识图谱使用 Node 内置的 `node:sqlite`，仍然零依赖）。没有安装步骤，也没有 `npm install`：服务端只用 Node 内置模块，前端是原生 HTML/CSS/ESM；pdf.js 与 KaTeX 已内置在 `public/vendor/`，离线也能解析 PDF 与渲染公式（本地文件缺失时才回退 CDN）。
 
 一个页面、两个视图：
 
@@ -132,7 +132,7 @@ $env:PAPERLENS_API_KEY='sk-xxx'; node server/index.mjs
 | BERT（双栏） | 16/16 页 | p50 37%、p90 37%（= 栏宽） | 0 |
 
 **AI 精读**（流式）
-固定 7 个小节，边生成边渲染成卡片：一句话结论 / 要解决的问题 / 核心方法 / 关键创新 / 实验与结论 / 局限与可延伸 / 精读要点。生成中可随时点「停止」。渲染是增量式的：每个小节一张卡片，流式时只重画内容变化的那一张，不会整块闪动。公式用 KaTeX 渲染（`$...$` 行内、`$$...$$` 独立，按需从 CDN 加载，离线时保留 LaTeX 原文）；模型写出的缺参数上下标（如 `Q^=`）会自动补空组，多行公式逐段渲染，个别坏公式只保留局部原文，不会拖垮整块。思考型模型（DeepSeek 等）的思维链走 `reasoning_content`，单独接出来只在状态栏显示进度，不会混进正文。
+固定 7 个小节，边生成边渲染成卡片：一句话结论 / 要解决的问题 / 核心方法 / 关键创新 / 实验与结论 / 局限与可延伸 / 精读要点。生成中可随时点「停止」。渲染是增量式的：每个小节一张卡片，流式时只重画内容变化的那一张，不会整块闪动。公式用 KaTeX 渲染（`$...$` 行内、`$$...$$` 独立，本地库加载，加载失败时保留 LaTeX 原文）；模型写出的缺参数上下标（如 `Q^=`）会自动补空组，多行公式逐段渲染，个别坏公式只保留局部原文，不会拖垮整块。思考型模型（DeepSeek 等）的思维链走 `reasoning_content`，单独接出来只在状态栏显示进度，不会混进正文。
 
 **结构化抽取**（第二次调用）
 精读结束后自动再请求一次，让模型输出严格 JSON：`tags` / `concepts` / `claims` / `diagram`。服务端会做容错归一化（丢悬空边、补默认 kind、限制节点数），坏 JSON 会自动重试一次。
@@ -143,7 +143,7 @@ $env:PAPERLENS_API_KEY='sk-xxx'; node server/index.mjs
 - 结构：封面（标题/来源/模型/标签/一句话结论）→ 执行摘要 → 精读正文（7 节）→ 核心概念与关键论断 → 方法链路图（浅色矢量 SVG）→ 追问要点 + 完整问答 → 可选原文节选
 - 可勾选包含内容，追问可选「全部 / 最近 5 条 / 不含」
 - 「打印 / 保存为 PDF」：在隐藏 iframe 里渲染报告后调起浏览器打印（不依赖弹窗权限），打印对话框里选「另存为 PDF」即可
-- 「下载 HTML」：下载同款报告，CSS 已内联；公式字体走 KaTeX CDN，离线时显示 LaTeX 原文
+- 「下载 HTML」：下载同款报告，CSS 已内联；公式字体使用本地 KaTeX，离线也能正常显示
 - 导出前调用一次 `/api/export/summary` 生成「执行摘要 + 追问要点」；demo 模式或调用失败会退回**本地归纳**（每节首句 + 每条回答首句），不会挡住导出
 
 **交互图解**（自研 SVG 渲染器，无 Mermaid 依赖）
@@ -180,12 +180,19 @@ public/
   text.js            原文分段、精读 markdown 解析（纯函数）
   pdfview.js         PDF 原版渲染 + 段落热区
   diagram.js         交互式 SVG 图解渲染器
-  math.js            KaTeX 公式渲染（CDN 按需加载）
+  math.js            KaTeX 公式渲染（本地优先，CDN 回退）
   report.js          导出报告：HTML 模板、iframe 打印
   kg/
     app.js graph.js starfield.js   知识图谱前端
     styles.css                     图谱原始样式
     styles.scoped.css              作用域化后的样式（单页外壳使用）
+  vendor/
+    katex/                         本地 KaTeX（katex.mjs / CSS / 字体）
+    pdfjs/                         本地 pdf.js（pdf.min.mjs / worker / cmaps / 标准字体）
+scripts/
+  check.mjs                        跨平台语法检查（node --check）
+  smoke.mjs                        临时数据目录启动 + 关键接口冒烟
+.github/workflows/ci.yml           Ubuntu / macOS / Windows 矩阵
 tools/restore-from-reports.mjs     从精读报告还原图谱
 docs/开发纪要.md                   图谱设计决策与运维记录
 docs/合并设计方案.md               合并架构与分阶段方案
@@ -236,11 +243,20 @@ data: {"type":"done","mode":"live"}
 - 需要 **Node ≥ 22.5**（`node:sqlite` 的版本门槛）。Node 22.5–23.3 要加 `--experimental-sqlite`。
 - 仓库不跟踪任何含 Key 或本地数据的文件：`.gitignore` 已忽略 `data/config.json`、`data/graphs/`、`data/backups/`、`data/papers/`、`data/*.db`、`.env*`。如果不小心提交过 Key：仅删除文件不够，请立即轮换 Key 并清理 Git 历史（`git filter-repo`）。
 - 精读正文会按长度截断（默认保留头 70% + 尾 30%，约 26000 字符），超长论文建议分章精读。
-- PDF 解析依赖从 CDN 动态加载 pdf.js；纯离线环境请改用「粘贴正文」。解析后的 PDF 会存入本机论文库，换浏览器也能回到原版视图。
+- pdf.js 与 KaTeX 已内置在 `public/vendor/`，离线可解析 PDF、渲染公式；只有本地文件缺失时才回退 CDN。解析后的 PDF 会存入本机论文库，换浏览器也能回到原版视图。
 - arXiv 全文依赖 `arxiv.org/html/<id>` 是否存在，老论文可能只有摘要，此时会提示直接粘贴正文。
 - 图解质量取决于模型是否按约定结构输出；结构不合规时会被归一化兜底，缺失部分在图上表现为节点无 detail。
 - 图谱侧：纯前端渲染 / 需要登录的网页抓不到正文；图片必须配视觉模型才能抽概念；概念按名称 + 别名归一化合并；一个图谱适合几百个节点，上千节点时 SVG 渲染会变慢。
 - 旧的图谱地址 `/kg/` 会 302 到 `/?view=kg`；`/kg/app.js` 等资源仍保留。
+
+## 持续集成
+
+`.github/workflows/ci.yml` 在 Ubuntu / macOS / Windows 三个平台跑同一套检查：
+
+```bash
+npm run check   # 所有 js/mjs 的 node --check
+npm run smoke   # 临时数据目录启动服务，检查页面、配置、论文库、图谱与本地 vendor
+```
 
 ## 快捷键
 

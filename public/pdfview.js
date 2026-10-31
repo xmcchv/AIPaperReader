@@ -8,8 +8,12 @@
  */
 import { isSectionTitle } from './text.js';
 
+const PDFJS_LOCAL = '/vendor/pdfjs/pdf.min.mjs';
+const WORKER_LOCAL = '/vendor/pdfjs/pdf.worker.min.mjs';
+const ASSETS_LOCAL = '/vendor/pdfjs/';
 const PDFJS_CDN = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.8.69/build/pdf.min.mjs';
 const WORKER_CDN = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.8.69/build/pdf.worker.min.mjs';
+const ASSETS_CDN = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.8.69/';
 
 const CAPTION_RE = /^(figure|table|algorithm|listing)\s*\d+\s*[:.]/i;
 const MATH_RE = /[√∫∑∏≈≤≥≠]/;
@@ -17,12 +21,21 @@ const MIN_SCALE = 0.45;
 const MAX_SCALE = 3;
 
 let pdfjsPromise = null;
+let pdfAssetBase = ASSETS_LOCAL;
+
+async function loadPdfjsModule(moduleUrl, workerUrl, assetsBase) {
+  const mod = await import(moduleUrl);
+  mod.GlobalWorkerOptions.workerSrc = workerUrl;
+  pdfAssetBase = assetsBase;
+  return mod;
+}
+
 function getPdfjs() {
   if (!pdfjsPromise) {
-    pdfjsPromise = import(PDFJS_CDN).then((mod) => {
-      mod.GlobalWorkerOptions.workerSrc = WORKER_CDN;
-      return mod;
-    });
+    // 本地优先；文件缺失时回退 CDN。cmaps / 标准字体也跟着走同一来源。
+    pdfjsPromise = loadPdfjsModule(PDFJS_LOCAL, WORKER_LOCAL, ASSETS_LOCAL).catch(() =>
+      loadPdfjsModule(PDFJS_CDN, WORKER_CDN, ASSETS_CDN),
+    );
   }
   return pdfjsPromise;
 }
@@ -861,7 +874,12 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
     /** 解析 PDF：聚合段落并缓存，暂不渲染（等视图真正显示时再画，避免隐藏容器宽度为 0） */
     async load(bytes) {
       const pdfjs = await getPdfjs();
-      const doc = await pdfjs.getDocument({ data: new Uint8Array(bytes) }).promise;
+      const doc = await pdfjs.getDocument({
+        data: new Uint8Array(bytes),
+        cMapUrl: `${pdfAssetBase}cmaps/`,
+        cMapPacked: true,
+        standardFontDataUrl: `${pdfAssetBase}standard_fonts/`,
+      }).promise;
       const pages = [];
       const allParas = [];
       let columns = 1;

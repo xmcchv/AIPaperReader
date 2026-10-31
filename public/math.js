@@ -1,28 +1,44 @@
 /**
  * 精读正文里的数学公式渲染。
  *
- * 和 pdf.js 一样按需从 CDN 加载 KaTeX（项目本身零依赖、无构建步骤）；
- * 离线或加载失败时保留 LaTeX 原文，不影响阅读。
+ * 优先使用仓库内置的 KaTeX（public/vendor/katex，随仓库分发），离线可用；
+ * 本地文件缺失时回退 CDN。加载失败则保留 LaTeX 原文，不影响阅读。
  * 支持 $...$ / $$...$$ / \(...\) / \[...\]，代码块里不处理。
  */
 
 const KATEX_VERSION = '0.16.11';
-const KATEX_BASE = `https://cdn.jsdelivr.net/npm/katex@${KATEX_VERSION}/dist/`;
+const KATEX_LOCAL = '/vendor/katex/';
+const KATEX_CDN = `https://cdn.jsdelivr.net/npm/katex@${KATEX_VERSION}/dist/`;
 
 let katexPromise = null;
+
+function ensureKatexCss(base) {
+  const old = document.querySelector('link[data-katex]');
+  if (old) old.remove();
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = `${base}katex.min.css`;
+  link.dataset.katex = '1';
+  document.head.appendChild(link);
+}
+
+async function importKatex(base) {
+  const mod = await import(`${base}katex.mjs`);
+  return mod.default || mod;
+}
 
 function loadKatex() {
   if (katexPromise) return katexPromise;
   katexPromise = (async () => {
-    if (!document.querySelector('link[data-katex]')) {
-      const link = document.createElement('link');
-      link.rel = 'stylesheet';
-      link.href = `${KATEX_BASE}katex.min.css`;
-      link.dataset.katex = '1';
-      document.head.appendChild(link);
+    try {
+      const mod = await importKatex(KATEX_LOCAL);
+      ensureKatexCss(KATEX_LOCAL);
+      return mod;
+    } catch {
+      const mod = await importKatex(KATEX_CDN);
+      ensureKatexCss(KATEX_CDN);
+      return mod;
     }
-    const mod = await import(`${KATEX_BASE}katex.mjs`);
-    return mod.default || mod;
   })().catch(() => null);
   return katexPromise;
 }
