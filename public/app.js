@@ -600,6 +600,7 @@ const READING_EMPTY_HTML =
 let readingCards = [];
 let readingRenderTimer = 0;
 let readingLastPaint = 0;
+let readingSaveAt = 0;
 let demoToastShown = false;
 
 function clearReading() {
@@ -784,6 +785,7 @@ async function runAnalysis() {
   state.readingError = '';
   state.structure = null;
   readingCards = [];
+  readingSaveAt = Date.now();
   clearTimeout(readingRenderTimer);
   readingRenderTimer = 0;
   renderStructure(null);
@@ -800,6 +802,11 @@ async function runAnalysis() {
         if (evt.type === 'delta') {
           state.readingText += evt.text;
           queueReadingRender();
+          // 长精读边生成边存，避免中途关页/崩溃丢掉已生成内容
+          if (Date.now() - readingSaveAt > 8000) {
+            readingSaveAt = Date.now();
+            schedulePaperSave(0);
+          }
         } else if (evt.type === 'meta') {
           $('#reading-status').textContent = `生成中 · ${evt.model || ''}`;
         } else if (evt.type === 'thinking') {
@@ -833,7 +840,8 @@ async function runAnalysis() {
   }
 
   if (!state.aborted && state.readingText.trim()) await loadStructure();
-  if (!state.aborted) schedulePaperSave(300);
+  // 手动停止也把已生成的部分存进论文库
+  if (state.readingText.trim()) schedulePaperSave(300);
 }
 
 async function loadStructure() {
@@ -940,6 +948,8 @@ async function ask(question, selection = '') {
     answerEntry.error = true;
     target.textContent = answerEntry.text;
   }
+  // 完整回答已经写回 answerEntry，补一次保存
+  schedulePaperSave(200);
 }
 
 /* -------------------------------- 导出报告 -------------------------------- */
