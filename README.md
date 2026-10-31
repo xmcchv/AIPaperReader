@@ -273,7 +273,17 @@ npm run desktop:build   # 生成未打包目录 release/win-unpacked（当前平
 npm run desktop:dist    # 生成安装包：Windows NSIS/portable、macOS dmg、Linux AppImage
 ```
 
-三平台需要分别在对应系统上构建，产物在 `release/`（已 gitignore）。Electron 只是 `devDependencies`，普通命令行 `node server/index.mjs` 仍然可用，服务端依旧零运行时依赖。
+三平台需要分别在对应系统上构建，产物在 `release/`（已 gitignore）。Windows 会生成 `PaperLens Setup 2.1.0.exe`（安装包）与 `PaperLens 2.1.0.exe`（免安装便携版）。Electron 只是 `devDependencies`，普通命令行 `node server/index.mjs` 仍然可用，服务端依旧零运行时依赖。
+
+构建脚本默认使用 npmmirror 镜像并让 Node 使用系统根证书，用来绕过部分网络环境下访问 GitHub 时的 `unable to verify the first certificate`。如果仍然失败：
+
+```bash
+# 换一个可用的镜像
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ npm run desktop:dist
+
+# 仅在受信任网络下临时跳过证书校验
+PAPERLENS_INSECURE_TLS=1 npm run desktop:dist
+```
 
 ## 持续集成
 

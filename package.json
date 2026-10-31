@@ -12,8 +12,8 @@
     "check": "node scripts/check.mjs",
     "smoke": "node scripts/smoke.mjs",
     "desktop": "electron .",
-    "desktop:build": "electron-builder --dir",
-    "desktop:dist": "electron-builder"
+    "desktop:build": "node scripts/desktop-build.mjs --dir",
+    "desktop:dist": "node scripts/desktop-build.mjs"
   },
   "engines": {
     "node": ">=22.5"
