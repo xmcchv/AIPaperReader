@@ -1,0 +1,1040 @@
+/* ==========================================================================
+   视觉精修层（最后加载，只改外观，不动布局结构）
+   目标：三视图统一成「中性画布 + 白卡片 + 极细边 + 单一强调色」，
+   控件克制、层次靠留白和 1px 线，而不是靠色块和阴影堆叠。
+   参考范式：Linear 的分段控件、Readwise Reader 的三栏阅读器、
+   Vercel 的极简按钮与边框。
+   ========================================================================== */
+
+:root {
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ui-radius: 10px;
+  --ui-radius-sm: 8px;
+  --ui-ring: 0 0 0 3px var(--accent-soft);
+}
+
+/* ------------------------------- 基础 ---------------------------------- */
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text) 16%, transparent);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text) 30%, transparent);
+  background-clip: content-box;
+}
+
+/* ------------------------------- 顶栏 ---------------------------------- */
+
+.topbar {
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  backdrop-filter: saturate(1.6) blur(12px);
+  -webkit-backdrop-filter: saturate(1.6) blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand-mark {
+  text-shadow: none;
+  font-size: 18px;
+  color: var(--accent);
+}
+
+.brand-text strong {
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: 0.1px;
+}
+
+.brand-text small {
+  font-size: 10.5px;
+  letter-spacing: 0.3px;
+  color: var(--muted);
+}
+
+/* 视图切换：从「三颗药丸」改成真正的分段控件 */
+.app-switch {
+  gap: 2px;
+  padding: 3px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.app-switch button {
+  color: var(--text-dim);
+  opacity: 1;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 4px 12px;
+  border-radius: 7px;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+
+.app-switch button:hover {
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+  color: var(--text);
+}
+
+.app-switch button.active {
+  background: var(--panel);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+/* ------------------------------- 按钮 ---------------------------------- */
+
+.btn {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text-dim);
+  font-weight: 500;
+  box-shadow: none;
+  transition: background 0.15s var(--ease), border-color 0.15s var(--ease), color 0.15s var(--ease);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--panel-2);
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.btn:active:not(:disabled) {
+  transform: none;
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+  color: #fff;
+  filter: none;
+}
+
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+.btn.ghost:hover:not(:disabled) {
+  background: var(--panel-2);
+  border-color: transparent;
+}
+
+.btn.tiny {
+  height: 26px;
+  padding: 0 9px;
+  font-size: 11.5px;
+  border-radius: 7px;
+}
+
+.btn.icon {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  justify-content: center;
+  border-color: transparent;
+  background: transparent;
+}
+
+.btn.icon:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+
+.btn.running {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+/* --------------------------- 输入 / 胶囊 -------------------------------- */
+
+input[type='text'],
+input[type='search'],
+input[type='password'],
+input[type='number'],
+input:not([type]) {
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease), background 0.15s var(--ease);
+}
+
+input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  box-shadow: var(--ui-ring);
+}
+
+/* 论文标题胶囊 / 文件名胶囊 */
+.title-chip,
+#view-translate .file-chip {
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease), background 0.15s var(--ease);
+}
+
+.title-chip:focus-within,
+#view-translate .file-chip:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  box-shadow: var(--ui-ring);
+  background: var(--panel);
+}
+
+.title-chip .title-input {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+/* ------------------------------- 侧栏 ---------------------------------- */
+
+#sidebar {
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+
+#sidebar .sidebar-inner {
+  background: var(--panel);
+}
+
+#sidebar .side-head {
+  padding: 14px 12px 10px;
+}
+
+#sidebar .side-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+
+#sidebar .side-count {
+  min-width: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--ink-3);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+#sidebar .side-search {
+  padding: 4px 12px 8px;
+}
+
+#sidebar .side-search input {
+  height: 30px;
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  font-size: 12.5px;
+}
+
+#sidebar .side-search input::placeholder {
+  color: var(--ink-3);
+}
+
+#sidebar .side-search input:focus {
+  background: var(--panel);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--line));
+  box-shadow: var(--ui-ring);
+}
+
+#sidebar .history {
+  padding: 2px 8px 10px;
+}
+
+#sidebar .hitem {
+  padding: 9px 10px;
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid transparent;
+  margin-bottom: 1px;
+}
+
+#sidebar .hitem:hover {
+  background: var(--panel-2);
+}
+
+#sidebar .hitem.active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+#sidebar .hitem.active::before {
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+}
+
+#sidebar .hitem-title {
+  font-size: 12.8px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+#sidebar .hitem.active .hitem-title {
+  font-weight: 600;
+}
+
+#sidebar .hitem-meta {
+  font-size: 11px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+#sidebar .hbadge {
+  border-radius: 999px;
+  padding: 0 5px;
+  font-size: 10px;
+}
+
+#sidebar .side-foot {
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+
+/* ----------------------------- 精读三栏 -------------------------------- */
+
+.workspace {
+  background: var(--bg);
+}
+
+.pane {
+  border-right: 1px solid var(--line);
+}
+
+.pane:last-child {
+  border-right: 0;
+}
+
+.pane-head {
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  padding: 0 14px;
+}
+
+.pane-head h2 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.pane-meta {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 内容卡片：白底 + 极细边 + 轻微阴影，代替满屏留白 */
+.pane .card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.16s var(--ease), box-shadow 0.16s var(--ease);
+}
+
+.pane .card:hover {
+  border-color: color-mix(in srgb, var(--text) 14%, var(--line));
+  box-shadow: 0 2px 6px rgba(16, 18, 22, 0.06);
+}
+
+.pane .card h4 {
+  font-size: 13px;
+  letter-spacing: 0.01em;
+}
+
+.pane .card p,
+.pane .card li {
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: var(--text-dim);
+}
+
+.pane .card strong {
+  color: var(--text);
+}
+
+/* 空态：加一点结构，不再是三行灰字 */
+.empty-state {
+  color: var(--text-dim);
+}
+
+.empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.empty-sub {
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--muted);
+}
+
+.empty-state .btn {
+  height: 34px;
+}
+
+/* ----------------------------- 翻译页 ---------------------------------- */
+
+#view-translate .topbar {
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  backdrop-filter: saturate(1.6) blur(12px);
+  -webkit-backdrop-filter: saturate(1.6) blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+
+#view-translate .btn {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--ui-radius-sm);
+  border-color: var(--line);
+  background: var(--panel);
+  transition: background 0.15s var(--ease), border-color 0.15s var(--ease), color 0.15s var(--ease);
+}
+
+#view-translate .btn:hover:not(:disabled) {
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+
+#view-translate .btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+#view-translate .btn.primary:hover:not(:disabled) {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}
+
+#view-translate .btn.ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+#view-translate .btn.icon {
+  width: 30px;
+  padding: 0;
+  background: transparent;
+  border-color: transparent;
+}
+
+#view-translate .btn.icon:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+
+#view-translate .btn.tiny {
+  height: 25px;
+  padding: 0 8px;
+  font-size: 11.5px;
+}
+
+/* 左栏 PDF 与右栏译文的分界更清楚一点 */
+#view-translate .pane-head {
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+#view-translate .pane-pdf .pane-head {
+  background: var(--pdf-bg);
+  border-bottom-color: var(--line);
+}
+
+/* 卡片：从「贴边的行」改成留白更舒服的条目 */
+#view-translate .cards {
+  padding: 6px 10px 40px;
+}
+
+#view-translate .card {
+  border-radius: var(--ui-radius);
+  border: 1px solid transparent;
+  padding: 12px 12px 14px;
+  margin-bottom: 2px;
+  transition: background 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+
+#view-translate .card:hover,
+#view-translate .card.hover {
+  background: var(--panel-2);
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+#view-translate .card.active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+#view-translate .card.active::before {
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+}
+
+#view-translate .card .en {
+  font-size: calc(var(--card-font) - 0.5px);
+  line-height: 1.72;
+  color: var(--text-dim);
+}
+
+#view-translate .card .zh {
+  font-size: calc(var(--card-font) - 0.5px);
+  line-height: 1.85;
+  color: var(--text);
+}
+
+#view-translate .card-meta {
+  color: var(--muted);
+}
+
+#view-translate .card-meta .pg {
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 10px;
+  padding: 0 5px;
+}
+
+#view-translate .cards-empty {
+  color: var(--muted);
+}
+
+/* 设置 / 顺序弹窗里的控件 */
+#view-translate .modal-card,
+.modal-card {
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-lg);
+  background: var(--panel);
+}
+
+.modal-head {
+  border-bottom: 1px solid var(--line);
+}
+
+.modal-head h2 {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.modal-foot {
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-2) 60%, transparent);
+}
+
+#view-translate .order-row {
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+/* ------------------------------ 图谱 ----------------------------------- */
+
+.kg-view {
+  background: var(--graph-bg);
+}
+
+.kg-view .node rect {
+  rx: 8;
+  ry: 8;
+  stroke-width: 1;
+  filter: drop-shadow(0 1px 1px rgba(16, 18, 22, 0.05));
+}
+
+.kg-view .node:hover rect {
+  stroke-width: 1.5;
+}
+
+.kg-view .node-label {
+  font-weight: 500;
+}
+
+.kg-view .edge path {
+  stroke-width: 1.2;
+  opacity: 0.75;
+}
+
+.kg-view .edge:hover path {
+  opacity: 1;
+}
+
+/* 图谱左右两栏与顶栏按钮对齐同一套观感 */
+.kg-view .btn,
+.kg-view button {
+  border-radius: var(--ui-radius-sm);
+}
+
+.kg-view aside,
+.kg-view .side {
+  border-color: var(--border);
+}
+
+/* ------------------------------ 小屏 ----------------------------------- */
+
+@media (max-width: 900px) {
+  .app-switch button {
+    padding: 4px 9px;
+    font-size: 12px;
+  }
+}
+
+/* ==========================================================================
+   第二轮：空态、工具条、图谱细节
+   ========================================================================== */
+
+/* 空态统一加一块「图标牌」，三栏都有落点，不再是三行灰字 */
+.empty-state::before {
+  content: '';
+  display: block;
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background-color: var(--panel);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b64f0' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/%3E%3Cpath d='M14 2v6h6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 20px;
+  box-shadow: var(--shadow-sm);
+}
+
+.empty-title {
+  font-size: 14.5px;
+  letter-spacing: 0.01em;
+}
+
+.empty-sub {
+  max-width: 340px;
+  margin: 6px auto 0;
+}
+
+/* 翻译页：中栏整块灰不如下沉一档，空态做成「投放区」 */
+#view-translate .pane-pdf {
+  background: var(--bg);
+}
+
+#view-translate .empty-inner {
+  width: min(440px, 82%);
+  padding: 34px 30px 28px;
+  border: 1px dashed color-mix(in srgb, var(--ink-3) 42%, transparent);
+  border-radius: 18px;
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+  text-align: center;
+}
+
+#view-translate .empty-icon {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 14px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--accent);
+}
+
+#view-translate .empty-icon svg {
+  width: 26px;
+  height: 26px;
+  stroke-width: 1.4;
+}
+
+#view-translate .empty-inner h2 {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+#view-translate .empty-inner p {
+  margin: 0 0 16px;
+  font-size: 12.8px;
+  line-height: 1.8;
+  color: var(--ink-3);
+}
+
+#view-translate .empty-inner .btn {
+  height: 36px;
+  padding: 0 16px;
+  margin: 0 4px 10px;
+}
+
+#view-translate .empty-inner .btn.primary {
+  background: var(--accent);
+}
+
+#view-translate .empty-inner .tiny-note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.75;
+  color: color-mix(in srgb, var(--ink-3) 82%, transparent);
+}
+
+/* 工具条：一排小按钮不再各自带框，只靠 hover 提示可点 */
+#view-translate .pane-head .btn.tiny,
+.pane-head .btn.tiny,
+.pdf-toolbar .btn.tiny {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-dim);
+}
+
+#view-translate .pane-head .btn.tiny:hover:not(:disabled),
+.pane-head .btn.tiny:hover:not(:disabled),
+.pdf-toolbar .btn.tiny:hover:not(:disabled) {
+  background: var(--panel-2);
+  border-color: transparent;
+  color: var(--text);
+}
+
+#view-translate .pane-head {
+  height: 44px;
+}
+
+#view-translate .pane-head .btn.icon,
+.pane-head .btn.icon {
+  width: 26px;
+  height: 26px;
+}
+
+/* PDF 栏工具条浮在纸面上：加一点毛玻璃，避免和灰色背景糊在一起 */
+#view-translate .pane-pdf .pane-head {
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+
+/* 右侧译文区：给内容一个舒服的阅读宽度 */
+#view-translate .cards {
+  padding: 10px 14px 48px;
+}
+
+/* 精读三栏：中栏内容左右留白，右栏卡片间距 */
+.paper-body,
+.reading-list {
+  padding-left: 22px;
+  padding-right: 22px;
+}
+
+.reading-list .card + .card {
+  margin-top: 10px;
+}
+
+/* 追问框 */
+.ask-dock {
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.ask-dock input,
+.ask-dock textarea {
+  border-radius: var(--ui-radius-sm);
+}
+
+/* 图谱：画布、节点、面板 */
+.kg-view {
+  --graph-grid: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.kg-view .node rect {
+  rx: 10;
+  ry: 10;
+  stroke: var(--node-border);
+  fill: var(--node-bg);
+}
+
+.kg-view .node.selected rect {
+  stroke-width: 2;
+}
+
+.kg-view .node-label {
+  font-size: 12px;
+  font-weight: 550;
+  fill: var(--node-text);
+}
+
+.kg-view .edge path {
+  stroke-linecap: round;
+  opacity: 0.62;
+}
+
+/* 图谱两侧面板的分组标题更清楚 */
+.kg-view .panel-title,
+.kg-view .section-title,
+.kg-view .side-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+}
+
+/* 译文栏空态：和另外两个空态同一套排面 */
+#view-translate .cards-empty {
+  padding: 72px 28px;
+  color: var(--ink-3);
+}
+
+#view-translate .cards-empty::before {
+  content: '';
+  display: block;
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background-color: var(--panel);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b64f0' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h10M4 12h13M4 17h7'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 20px;
+  box-shadow: var(--shadow-sm);
+}
+
+#view-translate .cards-empty p:first-of-type {
+  font-size: 13.5px;
+  color: var(--ink-2);
+  margin-bottom: 8px;
+}
+
+#view-translate .cards-empty .dim {
+  max-width: 320px;
+  margin: 0 auto;
+  font-size: 12px;
+  line-height: 1.85;
+  opacity: 1;
+  color: var(--ink-3);
+}
+
+/* 顶栏右侧操作：主按钮与次按钮之间留出呼吸 */
+#view-translate .topbar .btn + .btn,
+.topbar .btn + .btn {
+  margin-left: 2px;
+}
+
+/* 深色下图标牌与拖拽区自动跟随（描边色换成淡紫） */
+html[data-theme='dark'] .empty-state::before,
+html[data-theme='dark'] #view-translate .cards-empty::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a5a0ff' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/%3E%3Cpath d='M14 2v6h6'/%3E%3C/svg%3E");
+}
+
+html[data-theme='dark'] #view-translate .cards-empty::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a5a0ff' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h10M4 12h13M4 17h7'/%3E%3C/svg%3E");
+}
+
+/* ==========================================================================
+   第三轮：内容区统一「灰底 + 白卡片」
+   三个视图的内容栏背景下沉一档，卡片浮起来才有层次。
+   ========================================================================== */
+
+/* 精读：精读栏 / 图解栏 */
+.pane[data-pane='reading'],
+.pane[data-pane='diagram'] {
+  background: var(--bg);
+}
+
+/* 翻译：右栏译文 */
+#view-translate .pane-text {
+  background: var(--bg);
+}
+
+/* 译文卡片：白底 + 极细边，英中在同一张卡里分两层 */
+#view-translate .card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--ui-radius);
+  margin-bottom: 6px;
+  padding: 12px 14px 14px;
+  box-shadow: var(--shadow-sm);
+}
+
+#view-translate .card:hover,
+#view-translate .card.hover {
+  background: var(--panel);
+  border-color: color-mix(in srgb, var(--text) 16%, var(--line));
+  box-shadow: 0 2px 8px rgba(16, 18, 22, 0.07);
+}
+
+#view-translate .card.active {
+  background: var(--panel);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+#view-translate .card.active::before {
+  display: none;
+}
+
+/* 英文弱一档、中文强一档，扫读时先抓到中文 */
+#view-translate .card .en {
+  font-size: calc(var(--card-font) - 1px);
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+#view-translate .card .zh {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line-2);
+  font-size: calc(var(--card-font) - 0.5px);
+  line-height: 1.9;
+  color: var(--ink);
+}
+
+#view-translate .card-meta {
+  margin-bottom: 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+
+#view-translate .card-meta .pg {
+  background: var(--panel-2);
+  border-color: transparent;
+  color: var(--ink-3);
+  font-weight: 500;
+}
+
+/* 卡片右上的小按钮：默认淡出，hover 才明确 */
+#view-translate .card .mini {
+  border-radius: 6px;
+}
+
+#view-translate .card .mini:hover {
+  background: var(--panel-2);
+}
+
+/* 精读卡片同样浮起来 */
+.pane[data-pane='reading'] .card,
+.pane[data-pane='diagram'] .card {
+  background: var(--panel);
+}
+
+/* 阅读栏的标题行与正文间距放松一点 */
+.reading-list {
+  padding-top: 12px;
+}
+
+/* ==========================================================================
+   第四轮：分段控件统一、间距收口
+   ========================================================================== */
+
+.segmented {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.seg {
+  border-radius: 7px;
+  padding: 3px 11px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
+  transition: background 0.15s var(--ease), color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+
+.seg:hover {
+  color: var(--text);
+}
+
+.seg.active {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+/* 译文列表：左右留白 + 卡片间距 */
+#view-translate .cards {
+  padding: 12px 16px 56px;
+}
+
+#view-translate .card {
+  margin-bottom: 8px;
+}
+
+#view-translate .card .en {
+  color: var(--ink-2);
+}
+
+/* 精读原文栏的工具栏：字号与高度再收一档，尽量一行放得下 */
+.pane-head .btn.tiny {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11.5px;
+}
+
+.pane-head .seg {
+  font-size: 11.5px;
+  padding: 2px 9px;
+}
+
+/* 精读栏标题行更安静：标题 + 统计 + 工具一行 */
+.pane-head h2 {
+  margin-right: 2px;
+}
+
+.pane-tools {
+  margin-left: auto;
+}
+
+/* 图谱画布：比面板深一档，白节点才有浮起感 */
+.kg-view .node rect {
+  filter: drop-shadow(0 1px 2px rgba(16, 18, 22, 0.07));
+}
+
+html[data-theme='dark'] .kg-view .node rect {
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+}
