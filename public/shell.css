@@ -1,0 +1,195 @@
+/* ==========================================================================
+   三视图外壳：顶栏通栏不变，历史论文侧栏从原文一侧展开
+   翻译页自己的样式已经作用域化到 #view-translate（public/translate/styles.css），
+   这里只负责外壳布局，不碰任何业务组件的尺寸。
+   ========================================================================== */
+
+[hidden] {
+  display: none !important;
+}
+
+:root {
+  --side-w: 248px;
+}
+
+body {
+  /* 侧栏从顶栏下方展开，顶栏本身保持通栏、不随侧栏开合移动 */
+  --shell-top: var(--topbar-h, 58px);
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+}
+
+body[data-view='translate'] {
+  --shell-top: 56px;
+}
+
+@media (max-width: 1180px) {
+  :root {
+    --side-w: 216px;
+  }
+}
+
+.app-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 翻译视图：自己就是纵向弹性容器（顶栏 + 工作区） */
+#view-translate {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+}
+
+/* 精读视图沿用原来的 display:contents，顶栏与工作区直接落进 .app-main */
+#view-paper[hidden] {
+  display: none !important;
+}
+
+/* ------------------------------ 历史论文侧栏 ------------------------------ */
+
+#sidebar {
+  position: fixed;
+  left: 0;
+  top: var(--shell-top);
+  bottom: 0;
+  width: var(--side-w);
+  z-index: 15;
+  transition: width 0.18s ease;
+}
+
+body.sidebar-collapsed #sidebar {
+  width: 0;
+}
+
+/* 内容只在工作区让位：顶栏依旧通栏 */
+#view-paper .workspace,
+#view-translate .workspace {
+  margin-left: var(--side-w);
+  transition: margin-left 0.18s ease;
+}
+
+body.sidebar-collapsed #view-paper .workspace,
+body.sidebar-collapsed #view-translate .workspace {
+  margin-left: 0;
+}
+
+/* 图谱自己 fixed 铺满，且不显示侧栏 */
+body[data-view='kg'] #sidebar {
+  display: none;
+}
+
+body[data-view='kg'] #view-kg {
+  inset: 0;
+}
+
+/* -------------------------------- 顶栏按钮 -------------------------------- */
+
+#btnSidebar,
+#btn-sidebar-toggle {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+}
+
+#btnSidebar:hover,
+#btn-sidebar-toggle:hover {
+  color: var(--accent);
+}
+
+body.sidebar-collapsed #btnSidebar,
+body.sidebar-collapsed #btn-sidebar-toggle {
+  color: var(--muted);
+}
+
+/* 图谱页不显示侧栏，但保留同宽占位，切换视图时按钮不跳位 */
+.sidebar-toggle-placeholder {
+  flex: none;
+  width: 30px;
+  height: 30px;
+}
+
+.sidebar-toggle-placeholder[hidden] {
+  display: none !important;
+}
+
+/* 翻译设置里的错误提示（Key 保存失败、缺主密码等） */
+#view-translate #cfgNote.warn {
+  color: var(--danger);
+}
+
+/* ---------------------- 合并段内部的顺序（翻译页弹窗） ---------------------- */
+
+#view-translate #mergeOrderModal .modal-card.narrow {
+  max-width: 580px;
+}
+
+#view-translate .order-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 46vh;
+  overflow: auto;
+}
+
+#view-translate .order-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+#view-translate .order-no {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+#view-translate .order-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#view-translate .order-row .mini {
+  flex: none;
+  /* .mini 默认 hover 才显形，弹窗里必须一直可见 */
+  opacity: 1;
+  min-width: 26px;
+}
+
+/* 「⇅ 顺序 N」入口用强调色，免得埋在卡片角上找不到 */
+#view-translate .mini.order-mini {
+  opacity: 1;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  background: var(--accent-soft);
+}
+
+#view-translate .mini.order-mini:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}

@@ -30,7 +30,7 @@ async function loadPdfjsModule(moduleUrl, workerUrl, assetsBase) {
   return mod;
 }
 
-function getPdfjs() {
+export function getPdfjs() {
   if (!pdfjsPromise) {
     // 本地优先；文件缺失时回退 CDN。cmaps / 标准字体也跟着走同一来源。
     pdfjsPromise = loadPdfjsModule(PDFJS_LOCAL, WORKER_LOCAL, ASSETS_LOCAL).catch(() =>
@@ -38,6 +38,18 @@ function getPdfjs() {
     );
   }
   return pdfjsPromise;
+}
+
+/** 单独打开一份 PDF（精读页上传时先抽分块用）；调用方负责 destroy() */
+export async function openPdfDocument(bytes) {
+  const pdfjs = await getPdfjs();
+  return pdfjs.getDocument({
+    data: bytes,
+    cMapUrl: `${pdfAssetBase}cmaps/`,
+    cMapPacked: true,
+    standardFontDataUrl: `${pdfAssetBase}standard_fonts/`,
+    isEvalSupported: false,
+  }).promise;
 }
 
 /* --------------------------------- 文本聚合 -------------------------------- */
@@ -688,6 +700,67 @@ export function mergeFlowingParagraphs(paras) {
 }
 /* -------------------------------- 视图 -------------------------------- */
 
+/**
+ * 翻译页的分块 → 精读页的段落。
+ * 块坐标是 PDF 用户空间（原点左下、y 向上），这里的 rect 用「距页面顶部」（y 向下），
+ * 转换只做一次减法，两边框出来的矩形才会完全重合。
+ */
+export function blocksToParas(blocks, pages) {
+  const out = [];
+  const maxPage = Math.max(0, pages.length - 1);
+  const clampPage = (n) => Math.min(Math.max(0, Number(n) || 0), maxPage);
+
+  /** 一块（PDF 空间、原点左下）→ 热区矩形（距页面顶部） */
+  const rectOf = (pageNo, x0, yTop, w, h) => {
+    const meta = pages[clampPage(pageNo)];
+    if (!meta) return null;
+    const top = meta.height - (Number(yTop) || 0);
+    return {
+      page: clampPage(pageNo),
+      x0: Number(x0) || 0,
+      y0: top,
+      x1: (Number(x0) || 0) + Math.max(1, w),
+      y1: top + Math.max(1, h),
+    };
+  };
+
+  const list = blocks
+    .slice()
+    .sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0));
+  list.forEach((b, i) => {
+    const page = clampPage(b.page);
+    const text = String(b.text || '').replace(/\s+/g, ' ').trim();
+    if (!pages[page] || !text) return;
+
+    const rects = [];
+    const main = rectOf(page, b.x, b.y, Number(b.w) || 1, Number(b.h) || 1);
+    if (main) rects.push(main);
+    // 翻译页合并出来的段落会在好几处各占一块，这里同样画几个框
+    for (const eb of Array.isArray(b.extraBoxes) ? b.extraBoxes : []) {
+      const extra = rectOf(
+        eb.page ?? page,
+        eb.x0,
+        eb.yTop,
+        (Number(eb.x1) || 0) - (Number(eb.x0) || 0),
+        (Number(eb.yTop) || 0) - (Number(eb.yBottom) || 0),
+      );
+      if (extra) rects.push(extra);
+    }
+    if (!rects.length) return;
+
+    out.push({
+      id: `b${i}`,
+      page,
+      text,
+      kind: b.kind || 'body',
+      heading: b.kind === 'heading',
+      caption: b.kind === 'caption',
+      rects,
+    });
+  });
+  return out;
+}
+
 export function createPdfView(host, { onAsk, onNotice } = {}) {
   const state = {
     doc: null,
@@ -695,6 +768,7 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
     pages: [],
     paras: [],
     paraById: new Map(),
+    zhByText: new Map(),
     text: '',
     scale: 1,
     renderedScale: 0,
@@ -745,6 +819,15 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
 
     card.appendChild(el('div', 'pdf-card-text', para.text));
 
+    // 翻译页翻过的段落直接给中文对照：两边用的是同一份分块，所以按原文文本就能命中
+    const zh = lookupZh(para.text);
+    if (zh) {
+      const zhBox = el('div', 'pdf-card-zh');
+      zhBox.appendChild(el('span', 'pdf-card-zh-label', '中文对照'));
+      zhBox.appendChild(el('div', 'pdf-card-zh-text', zh));
+      card.appendChild(zhBox);
+    }
+
     const actions = el('div', 'pdf-card-actions');
     const askBtn = el('button', 'btn tiny primary', '针对这段问 AI');
     askBtn.type = 'button';
@@ -773,6 +856,21 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
     card.style.left = `${Math.min(Math.max(8, left), Math.max(8, host.clientWidth - 340))}px`;
     card.style.top = `${rect.bottom - hostRect.top + host.scrollTop + 6}px`;
     host.appendChild(card);
+  }
+
+  const normText = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+
+  function lookupZh(text) {
+    if (!state.zhByText.size) return '';
+    const key = normText(text);
+    if (!key) return '';
+    const hit = state.zhByText.get(key);
+    if (hit) return hit;
+    const head = key.slice(0, 40);
+    for (const [en, zh] of state.zhByText) {
+      if (en.length > 20 && (en.startsWith(head) || key.startsWith(en.slice(0, 40)))) return zh;
+    }
+    return '';
   }
 
   function highlightPara(node, on) {
@@ -872,7 +970,7 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
 
   return {
     /** 解析 PDF：聚合段落并缓存，暂不渲染（等视图真正显示时再画，避免隐藏容器宽度为 0） */
-    async load(bytes) {
+    async load(bytes, { blocks = null } = {}) {
       const pdfjs = await getPdfjs();
       const doc = await pdfjs.getDocument({
         data: new Uint8Array(bytes),
@@ -883,22 +981,35 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
       const pages = [];
       const allParas = [];
       let columns = 1;
+      // 翻译页已经抽过块就用它：同一份分块，两个视图的框才会重合
+      const sharedBlocks = Array.isArray(blocks) && blocks.length ? blocks : null;
 
       for (let i = 1; i <= doc.numPages; i += 1) {
         const proxy = await doc.getPage(i);
         const viewport = proxy.getViewport({ scale: 1 });
+        pages.push({ index: i - 1, proxy, width: viewport.width, height: viewport.height, boxes: [] });
+        if (sharedBlocks) continue;
         const content = await proxy.getTextContent();
         const { paras, twoColumn } = buildPageParagraphs(content.items, viewport.width, viewport.height, i - 1);
         if (twoColumn) columns = 2;
-        pages.push({ index: i - 1, proxy, width: viewport.width, height: viewport.height, boxes: [] });
         allParas.push(...paras);
       }
 
-      // 跨栏 / 跨页把同一段接回来，再按页分配热区
-      const paras = mergeFlowingParagraphs(allParas);
-      paras.forEach((para, i) => {
-        para.id = `p${i}`;
-      });
+      let paras;
+      if (sharedBlocks) {
+        paras = blocksToParas(sharedBlocks, pages);
+        // 粗判分栏：块同时落在左半页与右半页就算双栏
+        const mid = pages.map((p) => p.width * 0.45);
+        const hasLeft = paras.some((p) => p.rects[0].x0 < (mid[p.page] || 0));
+        const hasRight = paras.some((p) => p.rects[0].x0 >= (mid[p.page] || 0));
+        columns = hasLeft && hasRight ? 2 : 1;
+      } else {
+        // 跨栏 / 跨页把同一段接回来，再按页分配热区
+        paras = mergeFlowingParagraphs(allParas);
+        paras.forEach((para, i) => {
+          para.id = `p${i}`;
+        });
+      }
       for (const para of paras) {
         for (const rect of para.rects) {
           const pageData = pages[rect.page];
@@ -970,6 +1081,23 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
 
     getScale() {
       return state.scale;
+    },
+
+    /** 这里传进来的是 [{text, zh}]：论文库里存的译文，key 是原文文本 */
+    setTranslations(list) {
+      state.zhByText = new Map();
+      for (const item of Array.isArray(list) ? list : []) {
+        const en = normText(item?.text);
+        const zh = String(item?.zh || '').trim();
+        if (en && zh) state.zhByText.set(en, zh);
+      }
+    },
+
+    /** 当前页里有译文的段落数，给工具栏显示覆盖率用 */
+    translatedCount() {
+      let n = 0;
+      for (const para of state.paras) if (lookupZh(para.text)) n += 1;
+      return n;
     },
 
     /** 概念定位：找到含该词的段落，滚动 + 闪烁 + 弹卡片 */

@@ -1,5 +1,6 @@
 import { createDiagram } from './diagram.js';
-import { createPdfView } from './pdfview.js';
+import { createPdfView, openPdfDocument } from './pdfview.js';
+import { extractDocumentBlocks } from './blocks.js';
 import { renderMathIn } from './math.js';
 import { getReportHtml, printReport, qaPairs, reportFilename, saveReportHtml } from './report.js';
 import { escapeHtml, isSectionTitle, parseReading, renderBlocks, splitParagraphs } from './text.js';
@@ -23,6 +24,8 @@ function formatCount(n) {
 const state = {
   paper: { title: '', text: '', source: '' },
   paperId: '',
+  blocks: null,
+  translations: [],
   library: [],
   readingText: '',
   readingError: '',
@@ -270,10 +273,23 @@ async function restorePdfFromServer(id) {
     const res = await fetch(`/api/paper/pdf?id=${encodeURIComponent(id)}`);
     if (!res.ok) return false;
     const bytes = await res.arrayBuffer();
-    const result = await pdfView.load(bytes);
+    if (!state.blocks?.length) {
+      const shared = await buildSharedBlocks(bytes, { quiet: true });
+      if (shared?.length) {
+        state.blocks = shared;
+        await saveBlocksToServer(id, shared);
+      }
+    }
+    const result = await pdfView.load(bytes, { blocks: state.blocks });
     state.hasPdf = true;
     state.pdfPages = result.numPages;
     $('#paper-view-switch').hidden = false;
+    // 只有 PDF 的论文：把解析出的段落补成正文，精读才有东西可读
+    if (!state.paper.text && String(result.text || '').trim().length > 100) {
+      state.paper.text = result.text;
+      renderPaper();
+      schedulePaperSave(600);
+    }
     switchPaperView('pdf');
     return true;
   } catch (err) {
@@ -287,6 +303,11 @@ function applyPaperRecord(record) {
   state.paperId = record.id;
   localStorage.setItem(LS_LAST_PAPER, record.id);
   setPaper({ title: record.title, text: record.text, source: record.source }, { keepReading: true });
+  // 翻译页抽好的分块：有就直接用，两个视图的框才能对得上
+  state.blocks = Array.isArray(record.blocks?.blocks) ? record.blocks.blocks : null;
+  // 同一份译文：点段落时卡片里直接给中文对照
+  state.translations = Array.isArray(record.translations) ? record.translations : [];
+  pdfView.setTranslations(state.translations);
 
   state.readingText = record.reading_md || '';
   state.readingError = '';
@@ -382,12 +403,47 @@ async function deleteLibraryPaper(id) {
   }
 }
 
+/**
+ * 抽一份 PDF 的规范分块（与翻译页同一套 extractor），失败返回 null。
+ * 精读页自己上传的 PDF 也走这条路，所以第一次打开就有共享分块。
+ */
+async function buildSharedBlocks(bytes, { quiet = false } = {}) {
+  try {
+    const doc = await openPdfDocument(bytes.slice(0));
+    const total = doc.numPages;
+    const blocks = await extractDocumentBlocks(doc, {
+      onProgress: (done, all) => {
+        if (!quiet) $('#upload-status').textContent = `正在提取分块 ${done}/${all}…`;
+      },
+    });
+    try {
+      doc.destroy();
+    } catch {
+      /* 已销毁 */
+    }
+    return blocks;
+  } catch (err) {
+    console.warn('[blocks] 提取失败', err);
+    return null;
+  }
+}
+
+async function saveBlocksToServer(id, blocks) {
+  if (!id || !blocks?.length) return;
+  try {
+    await postJson('/api/paper/blocks', { id, hash: id, blocks, generator: 'extract/4.10' });
+  } catch (err) {
+    console.warn('[blocks] 写入失败', err);
+  }
+}
+
 async function uploadPdfToServer(bytes) {
   if (!state.paperId && state.paper.text) await saveCurrentPaper();
   if (!state.paperId) return;
   try {
     const base64 = await blobToBase64(new Blob([bytes], { type: 'application/pdf' }));
     await postJson('/api/paper/pdf', { id: state.paperId, base64 });
+    await saveBlocksToServer(state.paperId, state.blocks);
     schedulePaperSave(0);
   } catch (err) {
     toast(`PDF 保存失败：${err.message}`);
@@ -420,7 +476,8 @@ function renderPaper() {
 
   if (!parts.length) {
     body.hidden = true;
-    empty.hidden = false;
+    // 只有 PDF、还没抽正文时，空态会盖住原版页面 —— 有 PDF 就不显示空态
+    empty.hidden = Boolean(state.hasPdf);
     $('#paper-stats').textContent = '';
     return;
   }
@@ -446,6 +503,9 @@ function setPaper(paper, { keepReading = false } = {}) {
   };
   state.hasPdf = Boolean(paper.hasPdf) && pdfView.isLoaded();
   state.pdfPages = Number(paper.pdfPages || 0);
+  state.blocks = null;
+  state.translations = [];
+  pdfView.setTranslations([]);
   if (!state.hasPdf) pdfView.destroy();
 
   $('#paper-title').value = state.paper.title;
@@ -474,7 +534,10 @@ function switchPaperView(view) {
 
   if (usePdf) {
     const chars = state.paper.text.replace(/\s+/g, '').length;
-    $('#paper-stats').textContent = `${state.pdfPages} 页 · ${formatCount(chars)} 字`;
+    const zhCount = state.translations.length;
+    $('#paper-stats').textContent = `${state.pdfPages} 页 · ${formatCount(chars)} 字${
+      zhCount ? ` · ${zhCount} 段译文（点段落看中文）` : ''
+    }`;
     pdfView
       .mount()
       .then(updatePdfZoomLabel)
@@ -570,7 +633,7 @@ async function restoreCachedPdf() {
   }
   if (!record?.bytes || record.name !== state.paper.source) return;
   try {
-    const result = await pdfView.load(record.bytes);
+    const result = await pdfView.load(record.bytes, { blocks: state.blocks });
     setPaper(
       {
         title: state.paper.title,
@@ -1355,9 +1418,12 @@ async function loadPdfFile(file) {
   status.textContent = '正在解析 PDF（提取段落与坐标）…';
   try {
     const bytes = await file.arrayBuffer();
+    // 先用翻译页同一套 extractor 抽规范分块，保证两个视图第一次打开就对得上
+    status.textContent = '正在提取分块…';
+    const shared = await buildSharedBlocks(bytes);
     // pdf.js 会把传入的 ArrayBuffer transfer 走（之后 byteLength 变成 0），
     // 这里先复制一份再解析，原始 bytes 留给 IndexedDB 持久化
-    const result = await pdfView.load(bytes.slice(0));
+    const result = await pdfView.load(bytes.slice(0), { blocks: shared });
     if (result.text.length < 200) {
       throw new Error('PDF 里几乎没抽到文本，可能是扫描件');
     }
@@ -1368,6 +1434,8 @@ async function loadPdfFile(file) {
       hasPdf: true,
       pdfPages: result.numPages,
     });
+    // setPaper 会清空 state.blocks，这里把刚抽好的分块放回来，供落库使用
+    state.blocks = shared?.length ? shared : null;
     // 存一份原始字节，刷新页面后还能回到 PDF 原版视图
     idbPut('last-pdf', { name: file.name, bytes, savedAt: Date.now() }).catch(() => {});
     await saveCurrentPaper();
@@ -1850,5 +1918,12 @@ async function main() {
     if (window.innerWidth <= 1080 && !$('.pane.mobile-active')) switchPane('paper');
   });
 }
+
+/* 外壳与共享侧栏从这里打开论文：翻译页点侧栏时也走这条路 */
+window.paperlens = {
+  ...(window.paperlens || {}),
+  loadPaperById,
+  refreshLibrary,
+};
 
 main();

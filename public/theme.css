@@ -1,0 +1,102 @@
+/* ==========================================================================
+   全局配色：取自 papertrans
+   暖白 / 中性灰两套色板，翻译、精读、图谱三个视图统一。
+   只覆盖颜色变量，不动任何布局；主题仍由 html[data-theme] 切换。
+   ========================================================================== */
+
+html[data-theme='light'] {
+  --bg: #f4f2ed;
+  --bg-soft: #faf9f6;
+  --panel: #ffffff;
+  --panel-2: #faf9f6;
+  --line: #e5e1d8;
+  --line-soft: #efece5;
+  --text: #1b1c1e;
+  --text-dim: #43474e;
+  --muted: #878d96;
+  --accent: #4f46e5;
+  --accent-soft: rgba(79, 70, 229, 0.07);
+  --accent-2: #6366f1;
+  --ok: #2f9e73;
+  --warn: #b8791f;
+  --danger: #d14343;
+  --shadow: 0 1px 2px rgba(20, 20, 25, 0.06), 0 8px 28px rgba(20, 20, 25, 0.08);
+  --paper-bg: #dcd8cf;
+  --mark: rgba(79, 70, 229, 0.16);
+  color-scheme: light;
+}
+
+html[data-theme='dark'] {
+  --bg: #141518;
+  --bg-soft: #1b1d21;
+  --panel: #1b1d21;
+  --panel-2: #202329;
+  --line: #2b2f36;
+  --line-soft: #24272d;
+  --text: #e9e7e2;
+  --text-dim: #b3b8c0;
+  --muted: #767d88;
+  --accent: #8b85ff;
+  --accent-soft: rgba(139, 133, 255, 0.1);
+  --accent-2: #a5a0ff;
+  --ok: #4fc99a;
+  --warn: #d8a24f;
+  --danger: #e0706f;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 34px rgba(0, 0, 0, 0.5);
+  --paper-bg: #0e0f11;
+  --mark: rgba(139, 133, 255, 0.22);
+  color-scheme: dark;
+}
+
+/* 图谱自带一套变量（作用域在 .kg-view），这里对齐同一套色板 */
+html[data-theme='dark'] .kg-view {
+  --bg: #141518;
+  --panel: #1b1d21;
+  --panel-2: #202329;
+  --panel-3: #252a33;
+  --border: #2b2f36;
+  --border-soft: #24272d;
+  --text: #e9e7e2;
+  --muted: #b3b8c0;
+  --faint: #767d88;
+  --accent: #8b85ff;
+  --accent-soft: rgba(139, 133, 255, 0.1);
+  --danger: #e0706f;
+  --ok: #4fc99a;
+  --warn: #d8a24f;
+  --graph-bg: #0e0f11;
+  --node-bg: #202329;
+  --node-border: #333842;
+  --node-text: #e9e7e2;
+  --edge-prereq: #8b85ff;
+  --edge-extends: #a5a0ff;
+  --edge-related: #767d88;
+  --edge-flow: #35a89b;
+  --shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
+}
+
+html[data-theme='light'] .kg-view {
+  --bg: #f4f2ed;
+  --panel: #ffffff;
+  --panel-2: #faf9f6;
+  --panel-3: #efece5;
+  --border: #e5e1d8;
+  --border-soft: #efece5;
+  --text: #1b1c1e;
+  --muted: #5c6167;
+  --faint: #878d96;
+  --accent: #4f46e5;
+  --accent-soft: rgba(79, 70, 229, 0.07);
+  --danger: #d14343;
+  --ok: #2f9e73;
+  --warn: #b8791f;
+  --graph-bg: #faf9f6;
+  --node-bg: #ffffff;
+  --node-border: #dcd6c9;
+  --node-text: #1b1c1e;
+  --edge-prereq: #4f46e5;
+  --edge-extends: #7c6cf0;
+  --edge-related: #9a9489;
+  --edge-flow: #1f8f84;
+  --shadow: 0 8px 24px rgba(20, 20, 25, 0.1);
+}

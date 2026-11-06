@@ -6,15 +6,278 @@
     <title>PaperLens · 论文精读 + 知识图谱</title>
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/kg/styles.scoped.css" />
+    <link rel="stylesheet" href="/sidebar.css" />
+    <link rel="stylesheet" href="/translate/styles.css" />
+    <link rel="stylesheet" href="/shell.css" />
+    <link rel="stylesheet" href="/theme.css" />
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234da3ff'/%3E%3Cpath d='M9 22V10h8a4 4 0 0 1 0 8h-4' stroke='white' stroke-width='2.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"
     />
   </head>
-  <body>
+  <body data-view="translate">
+    <aside id="sidebar" aria-label="历史论文">
+      <div class="sidebar-inner">
+        <div class="side-head">
+          <span class="side-title">历史论文</span>
+          <span class="side-count" id="historyCount">0</span>
+          <button class="btn icon" id="btnSideCollapse" title="收起侧栏（Ctrl+B）" aria-label="收起侧栏">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 18l-6-6 6-6"/>
+            </svg>
+          </button>
+        </div>
+        <div class="side-search">
+          <input id="historyFilter" type="search" placeholder="搜索标题…" spellcheck="false" aria-label="搜索历史论文" />
+        </div>
+        <div class="history" id="historyList" role="list"></div>
+        <div class="side-foot">
+          <button class="btn tiny" id="btnSideOpen">打开 PDF</button>
+          <span class="spacer"></span>
+          <button class="btn tiny" id="btnSideRefresh" title="重新读取历史列表">刷新</button>
+        </div>
+      </div>
+    </aside>
+
+    <div class="app-main">
+    <div id="view-translate" hidden>
+<header class="topbar">
+  <button class="btn icon" id="btnSidebar" title="历史论文（Ctrl+B）" aria-label="展开或收起历史论文">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>
+    </svg>
+  </button>
+  <nav class="app-switch" data-app-switch aria-label="切换视图">
+    <button type="button" data-view="translate" class="active">翻译</button>
+    <button type="button" data-view="paper">精读</button>
+    <button type="button" data-view="kg">知识图谱</button>
+  </nav>
+  <div class="brand">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/>
+    </svg>
+    <span class="brand-name">PaperTrans</span>
+    <span class="brand-sub">论文对照翻译</span>
+  </div>
+
+  <div class="file-chip" id="fileChip" hidden>
+    <span class="dot"></span><span id="fileName"></span>
+  </div>
+
+  <div class="spacer"></div>
+
+  <div class="progress-wrap" id="progressWrap" hidden>
+    <div class="progress"><div class="bar" id="progressBar"></div></div>
+    <span class="progress-text" id="progressText"></span>
+  </div>
+
+  <div class="actions">
+    <button class="btn primary" id="btnOpen">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      打开 PDF
+    </button>
+    <button class="btn" id="btnTranslateAll" disabled>翻译全文</button>
+    <button class="btn ghost" id="btnExport" disabled>导出 Markdown</button>
+    <button class="btn icon" id="btnExportProject" disabled title="导出工程文件：分段、顺序、译文（不含 PDF 与 API Key）" aria-label="导出工程文件">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+    </button>
+    <button class="btn icon" id="btnImportProject" title="导入工程文件（.papertrans.json）" aria-label="导入工程文件">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 8l5-5 5 5"/><path d="M12 3v12"/></svg>
+    </button>
+    <button class="btn icon" id="btnTheme" title="切换主题" aria-label="切换主题">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
+    <button class="btn icon" id="btnSettings" title="翻译设置" aria-label="翻译设置">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7.5 19l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3 13.6H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.7 7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 10 3.1V3a2 2 0 1 1 4 0v.1A1.6 1.6 0 0 0 16.5 5l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1.5z"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="workspace">
+  <main class="split" id="split">
+    <!-- 左：PDF -->
+  <section class="pane pane-pdf">
+    <div class="pane-head">
+      <div class="group">
+        <button class="btn tiny" id="btnPrev" title="上一页">↑</button>
+        <span class="page-label" id="pageLabel">— / —</span>
+        <button class="btn tiny" id="btnNext" title="下一页">↓</button>
+      </div>
+      <div class="group">
+        <button class="btn tiny" id="btnZoomOut" title="缩小">−</button>
+        <span class="zoom-label" id="zoomLabel">100%</span>
+        <button class="btn tiny" id="btnZoomIn" title="放大">+</button>
+        <button class="btn tiny" id="btnFit" title="适应宽度">⤢</button>
+      </div>
+      <label class="switch" title="滚动到新页面时自动翻译该页">
+        <input type="checkbox" id="autoTranslate" checked />
+        <span>自动翻译</span>
+      </label>
+      <label class="switch" title="用大模型判断段落边界（更准，但每页消耗少量 token）">
+        <input type="checkbox" id="aiSegment" />
+        <span>AI 分段</span>
+      </label>
+      <div class="spacer"></div>
+      <span class="corr-badge" id="corrBadge" hidden></span>
+      <div class="mode-switch" id="modeSwitch" hidden>
+        <button class="chip on" data-mode="block" title="点选 / 框选整个段落">按段</button>
+        <button class="chip" data-mode="line" title="点选 / 拖选单行">按行</button>
+        <button class="chip" data-mode="area" title="拉一个框，框住哪块文字就单独成一段">按区域</button>
+        <button class="chip" data-mode="order" title="按希望的阅读顺序依次点击 PDF 上的段落，一次性指定本页顺序">排序</button>
+      </div>
+      <button class="btn tiny" id="btnUndo" hidden title="撤销上一次分段修改">撤销</button>
+      <button class="btn tiny" id="btnEdit" title="手动合并 / 拆分 / 删除段落">编辑分段</button>
+    </div>
+
+    <div class="pdf-scroll" id="pdfScroll">
+      <div class="pages" id="pages"></div>
+
+      <div class="empty" id="empty">
+        <div class="empty-inner">
+          <div class="empty-icon">
+            <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>
+            </svg>
+          </div>
+          <h2>把论文 PDF 拖进来</h2>
+          <p>左侧显示原文与可点击的分块，右侧逐段给出中文译文。<br/>点击任一色块即可在右侧定位到对应段落。</p>
+          <button class="btn primary lg" id="btnOpen2">选择 PDF 文件</button>
+          <button class="btn lg" id="btnDemo">试看示例</button>
+          <p class="tiny-note">PDF 在浏览器里解析，原件、分段、顺序与译文统一存到本机服务端的 SQLite 数据库，不占浏览器空间，也不会发给外部翻译服务。<br/>刷新页面会自动恢复上次打开的文档，可在「设置」里关闭。</p>
+        </div>
+      </div>
+
+      <div class="busy" id="busy" hidden>
+        <div class="spinner"></div>
+        <span id="busyText">正在解析…</span>
+      </div>
+    </div>
+
+    <!-- 操作条放在滚动容器之外：fixed 定位，由 JS 贴着当前选区摆放 -->
+    <div class="sel-bar" id="selBar" hidden>
+      <span id="selCount">已选 0 段</span>
+      <button class="btn primary tiny" id="btnMergeSel" disabled>合并为一段</button>
+      <button class="btn tiny danger" id="btnDelSel">删除</button>
+      <button class="btn tiny" id="btnClearSel">取消选择</button>
+    </div>
+
+    <div class="sel-bar" id="lineBar" hidden>
+      <span id="lineCount">已选 0 行</span>
+      <button class="btn primary tiny" id="btnNewGroup">新建为一段</button>
+      <button class="btn tiny" id="btnJoinPrev" title="把这些行并入上方最近的段落">并入上一段</button>
+      <button class="btn tiny" id="btnJoinNext" title="把这些行并入下方最近的段落">并入下一段</button>
+      <button class="btn tiny danger" id="btnDelLines" title="这些行不再参与翻译">移除</button>
+      <button class="btn tiny" id="btnClearLines">取消</button>
+    </div>
+
+    <!-- 手动指定本页分段顺序：按阅读顺序依次点击 PDF 上的段落 -->
+    <div class="sel-bar order-bar" id="orderBar" hidden>
+      <span id="orderInfo">已排 0 段</span>
+      <button class="btn tiny" id="btnOrderUndo" title="撤掉最后一次点击">退一步</button>
+      <button class="btn tiny" id="btnOrderClear" title="清空本页已排的序号">清空</button>
+      <button class="btn tiny" id="btnOrderReset" title="清掉手动顺序，恢复按视觉位置的自动顺序">恢复自动</button>
+      <button class="btn primary tiny" id="btnOrderApply" title="按点击顺序重排本页分段，之后自动排序不会再打乱它">应用顺序</button>
+      <button class="btn tiny" id="btnOrderExit">退出</button>
+    </div>
+  </section>
+
+  <div class="divider" id="divider"><span></span></div>
+
+  <!-- 右：译文 -->
+  <section class="pane pane-text">
+    <div class="pane-head">
+      <span class="count" id="blockCount">0 段</span>
+      <div class="spacer"></div>
+      <label class="switch" title="滚动 PDF 时右栏自动跟随到当前段落">
+        <input type="checkbox" id="followScroll" checked />
+        <span>联动</span>
+      </label>
+      <button class="btn tiny" id="btnFontDec" title="缩小字号">A−</button>
+      <button class="btn tiny" id="btnFontInc" title="放大字号">A+</button>
+      <button class="btn tiny" id="btnToggleZh" title="显示/隐藏中文">中</button>
+    </div>
+    <div class="cards" id="cards">
+      <div class="cards-empty" id="cardsEmpty">
+        <p>尚未载入论文。</p>
+        <p class="dim">载入后会在这里按阅读顺序列出每个段落：上方英文原文，下方中文翻译。</p>
+      </div>
+    </div>
+  </section>
+  </main>
+</div>
+
+<input type="file" id="fileInput" accept="application/pdf,.pdf" hidden />
+<input type="file" id="projectInput" accept=".json,application/json,.papertrans.json" hidden />
+
+<!-- 合并顺序 -->
+<div class="modal" id="mergeOrderModal" hidden>
+  <div class="modal-card narrow">
+    <div class="modal-head">
+      <h2>调整这一段内部的顺序</h2>
+      <button class="btn icon" id="btnCloseMergeOrder" aria-label="关闭">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="note" id="mergeOrderHint">用 ↑ ↓ 调整各个片段在译文里的先后。</p>
+      <div class="order-list" id="mergeOrderList"></div>
+    </div>
+    <div class="modal-foot">
+      <span class="dim small">只影响这一段，应用后可撤销</span>
+      <div class="spacer"></div>
+      <button class="btn" id="btnMergeOrderCancel">取消</button>
+      <button class="btn primary" id="btnMergeOrderApply">应用</button>
+    </div>
+  </div>
+</div>
+
+<!-- 设置 -->
+<div class="modal" id="settingsModal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2>翻译设置</h2>
+      <button class="btn icon" id="btnCloseCfg" aria-label="关闭">✕</button>
+    </div>
+    <div class="modal-body">
+      <label class="field">
+        <span>翻译引擎</span>
+        <select id="cfgProvider"></select>
+      </label>
+      <div id="cfgFields"></div>
+      <label class="field" id="cfgPassField" hidden>
+        <span>主密码（加密保存 Key，与精读页同一个）</span>
+        <input id="cfgPass" type="password" placeholder="至少 6 位；只用于本机加密，不会落盘" autocomplete="new-password" />
+      </label>
+      <p class="note" id="cfgNote"></p>
+      <label class="switch" title="刷新页面时自动重开上次打开的 PDF，并恢复分段、顺序与译文">
+        <input type="checkbox" id="cfgRemember" checked />
+        <span>记住上次文档（PDF 存在本机服务端数据库）</span>
+      </label>
+      <div class="row">
+        <button class="btn" id="btnTest">测试连接</button>
+        <span class="test-result" id="testResult"></span>
+      </div>
+      <p class="note" id="cfgStoreInfo">正在读取存储信息…</p>
+    </div>
+    <div class="modal-foot">
+      <span class="dim small">配置与数据都保存在本机服务端 SQLite</span>
+      <div class="spacer"></div>
+      <button class="btn" id="btnCancelCfg">取消</button>
+      <button class="btn primary" id="btnSaveCfg">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+    </div>
+
     <div id="view-paper">
     <header class="topbar">
+      <button id="btn-sidebar-toggle" class="btn icon" type="button" title="历史论文（Ctrl+B）" aria-label="展开或收起历史论文">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>
+        </svg>
+      </button>
       <nav class="app-switch" data-app-switch aria-label="切换视图">
+        <button type="button" data-view="translate">翻译</button>
         <button type="button" data-view="paper" class="active">精读</button>
         <button type="button" data-view="kg">知识图谱</button>
       </nav>
@@ -26,7 +289,10 @@
         </div>
       </div>
 
-      <input id="paper-title" class="title-input" placeholder="论文标题（可留空，AI 会自动识别）" />
+      <div class="title-chip" title="论文标题（可留空，AI 会自动识别）">
+        <span class="dot" aria-hidden="true"></span>
+        <input id="paper-title" class="title-input" placeholder="论文标题（可留空）" aria-label="论文标题" />
+      </div>
 
       <div class="topbar-actions">
         <button id="model-badge" class="badge" type="button" title="当前模型">demo 模式</button>
@@ -337,9 +603,11 @@
     <div id="view-kg" class="kg-view" hidden>
 
     <header class="topbar">
+      <span class="sidebar-toggle-placeholder" aria-hidden="true"></span>
       <nav class="app-switch" data-app-switch aria-label="切换视图">
-        <button type="button" data-view="paper" class="active">精读</button>
-        <button type="button" data-view="kg">知识图谱</button>
+        <button type="button" data-view="translate">翻译</button>
+        <button type="button" data-view="paper">精读</button>
+        <button type="button" data-view="kg" class="active">知识图谱</button>
       </nav>
       <div class="brand">
         <span class="brand-mark" aria-hidden="true"></span>
@@ -642,8 +910,11 @@
   
     </div>
 
+    </div>
+
     <script type="module" src="/app.js"></script>
     <script type="module" src="/kg/app.js"></script>
+    <script type="module" src="/translate/app.js"></script>
     <script type="module" src="/shell.js"></script>
   </body>
 </html>

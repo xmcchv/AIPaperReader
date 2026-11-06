@@ -140,6 +140,65 @@ code {
   letter-spacing: 0.4px;
 }
 
+/* 论文标题：外观与翻译页的 .file-chip 一致（胶囊 + 小圆点 + 单行省略） */
+.title-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1 1 320px;
+  min-width: 120px;
+  max-width: 460px;
+  padding: 4px 10px;
+  border-radius: 99px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  transition: border-color 0.18s var(--ease), background 0.18s var(--ease);
+}
+
+.title-chip .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: 0 0 auto;
+}
+
+/* 填过标题就把圆点点亮，和翻译页的在线指示同一个语汇 */
+.title-chip:has(.title-input:not(:placeholder-shown)) .dot {
+  background: var(--ok);
+}
+
+.title-chip:focus-within {
+  border-color: var(--accent);
+  background: var(--panel);
+}
+
+.title-chip .title-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 12.5px;
+  color: inherit;
+  text-overflow: ellipsis;
+}
+
+.title-chip .title-input::placeholder {
+  color: var(--muted);
+}
+
+.title-chip .title-input:hover,
+.title-chip .title-input:focus {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+}
+
 .title-input {
   flex: 1;
   min-width: 80px;
@@ -169,6 +228,7 @@ code {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+  margin-left: auto;
 }
 
 .badge {
@@ -1354,6 +1414,31 @@ button.badge.clickable:hover {
   user-select: text;
 }
 
+/* 中文对照：翻译页翻过的段落，点开就直接给译文 */
+.pdf-card-zh {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+
+.pdf-card-zh-label {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 10.5px;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+}
+
+.pdf-card-zh-text {
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--text);
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
 .pdf-card-actions {
   display: flex;
   gap: 6px;
@@ -1463,7 +1548,7 @@ button.badge.clickable:hover {
     display: flex;
   }
 
-  .title-input {
+  .title-chip {
     display: none;
   }
 }
