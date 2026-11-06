@@ -22,6 +22,7 @@ dist/
 out/
 coverage/
 .reasonix/
+.workbuddy/
 tmp/
 *.log
 npm-debug.log*
