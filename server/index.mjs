@@ -3,6 +3,7 @@
  * 精读（/api/*）与知识图谱（/api/kg/*）共用一个进程、一份模型配置。
  * 只监听 127.0.0.1，API Key 不出本机。
  */
+import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +13,8 @@ import { streamChat, completeChat, extractJson, testConnection, LlmError } from 
 import { HttpError, sendJson, readBody, openSse, sleep, serveStatic } from './shared/http.mjs';
 import { handleKgApi } from './kg/routes.mjs';
 import { handlePaperApi } from './paper/routes.mjs';
+import { handleStoreApi } from './paper/store-adapter.mjs';
+import { handleTranslateApi } from './translate/routes.mjs';
 import { readingMessages, structureMessages, askMessages, summaryMessages } from './prompts.mjs';
 import { fetchArxivPaper } from './paper.mjs';
 import { SAMPLE_PAPER, DEMO_READING, DEMO_STRUCTURE, DEMO_ASK } from './samples.mjs';
@@ -45,6 +48,37 @@ function isKgLegacyPath(pathname) {
     KG_LEGACY_EXACT.has(pathname) ||
     KG_LEGACY_PREFIX.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
   );
+}
+
+/**
+ * 首页：给本地 JS / CSS 的引用加上 ?v=<文件 mtime>。
+ * 改了前端代码之后普通刷新就能生效，不用清缓存或硬刷新。
+ */
+function serveIndexHtml(res) {
+  const file = path.join(PUBLIC_DIR, 'index.html');
+  fs.readFile(file, 'utf8', (err, html) => {
+    if (err) {
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' }).end('index.html 缺失');
+      return;
+    }
+    const stamped = html.replace(
+      /(src|href)="(\/[^"?]+\.(?:js|css|mjs))"/g,
+      (whole, attr, url) => {
+        try {
+          const stat = fs.statSync(path.join(PUBLIC_DIR, url.slice(1)));
+          return `${attr}="${url}?v=${Math.floor(stat.mtimeMs)}"`;
+        } catch {
+          return whole;
+        }
+      },
+    );
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Length': Buffer.byteLength(stamped),
+      'Cache-Control': 'no-cache',
+    });
+    res.end(stamped);
+  });
 }
 
 /** demo 模式：把固定文本切片后模拟流式，让前端交互与真实调用完全一致 */
@@ -415,6 +449,21 @@ const server = http.createServer(async (req, res) => {
   const { pathname } = url;
 
   try {
+    // 翻译：新前缀 /api/translate/*，旧路径别名一并兼容
+    if (
+      pathname.startsWith('/api/translate/') ||
+      pathname === '/api/providers' ||
+      pathname === '/api/segment' ||
+      pathname === '/api/test'
+    ) {
+      if (await handleTranslateApi(req, res, url)) return;
+    }
+
+    // 翻译页的旧存储接口：全部落到论文库 papers.db
+    if (pathname.startsWith('/api/store/')) {
+      if (await handleStoreApi(req, res, url)) return;
+    }
+
     // 知识图谱：新前缀 /api/kg/*、旧路径别名、图片素材 /assets/*
     if (pathname.startsWith('/api/kg/') || isKgLegacyPath(pathname) || pathname.startsWith('/assets/')) {
       if (await handleKgApi(req, res, url)) return;
@@ -432,6 +481,10 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname.startsWith('/api/paper/') && pathname !== '/api/paper/fetch') {
       if (await handlePaperApi(req, res, url)) return;
+    }
+
+    if (pathname === '/api/translate') {
+      if (await handleTranslateApi(req, res, url)) return;
     }
 
     if (pathname.startsWith('/api/')) {
@@ -465,6 +518,10 @@ const server = http.createServer(async (req, res) => {
           return sendJson(res, 404, { ok: false, error: `未知接口 ${key}` });
       }
     }
+    if (pathname === '/' || pathname === '/index.html') {
+      serveIndexHtml(res);
+      return;
+    }
     serveStatic(res, PUBLIC_DIR, pathname);
   } catch (err) {
     if (res.headersSent) {
@@ -482,9 +539,10 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   const cfg = publicConfig();
-  console.log(`\n  PaperLens · 论文精读 + 知识图谱`);
-  console.log(`  ➜  精读工作台：http://${HOST}:${PORT}/`);
-  console.log(`  ➜  知识图谱：  http://${HOST}:${PORT}/kg/`);
+  console.log(`\n  PaperLens · 翻译 + 精读 + 知识图谱`);
+  console.log(`  ➜  翻译：      http://${HOST}:${PORT}/?view=translate`);
+  console.log(`  ➜  精读：      http://${HOST}:${PORT}/`);
+  console.log(`  ➜  知识图谱：  http://${HOST}:${PORT}/?view=kg`);
   const modelLine = cfg.locked
     ? 'API Key 已加密（未解锁）—— 在「模型设置」输入主密码，或设置 PAPERLENS_PASSPHRASE'
     : cfg.has_key

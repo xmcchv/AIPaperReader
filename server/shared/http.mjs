@@ -66,6 +66,25 @@ export function readBody(req, limit = 26 * 1024 * 1024) {
   });
 }
 
+/** 读取原始字节请求体（PDF 上传用）；默认上限 256MB */
+export function readBuffer(req, limit = 256 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > limit) {
+        reject(new HttpError(413, `请求体过大（上限 ${Math.round(limit / 1024 / 1024)}MB）`));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
 export function openSse(res) {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',

@@ -99,6 +99,11 @@ export const DEFAULT_CONFIG = {
   vision_model: '',
   vision_base_url: '',
   vision_api_key: '',
+  /**
+   * 翻译引擎：provider + 每个服务商各自一份配置。
+   * apiKey 与上面同规则加密（api_key_enc），免费引擎不需要 Key。
+   */
+  translate: { provider: 'free', providers: {} },
 };
 
 const MAX_TOKENS_CAP = 131072;
@@ -110,6 +115,8 @@ const MASK = '••••••••';
 /** 运行时解锁状态：明文 Key 只在内存里，不写盘 */
 let unlockedKey = '';
 let unlockedVisionKey = '';
+/** 翻译引擎的 Key：按服务商 id 缓存在内存（一个服务一把） */
+const unlockedTranslate = new Map();
 
 function envKey() {
   return String(
@@ -135,6 +142,16 @@ function resolveEncryptedSecret(file, field, cache) {
 const keyCache = { get value() { return unlockedKey; }, set value(v) { unlockedKey = v; } };
 const visionCache = { get value() { return unlockedVisionKey; }, set value(v) { unlockedVisionKey = v; } };
 
+function resolveTranslateKey(id, enc) {
+  if (!enc) return '';
+  if (unlockedTranslate.has(id)) return unlockedTranslate.get(id);
+  const pass = passphraseFromEnv();
+  if (!pass) return '';
+  const key = decryptSecret(enc, pass) || '';
+  if (key) unlockedTranslate.set(id, key);
+  return key;
+}
+
 function resolveEncryptedKey(file) {
   return resolveEncryptedSecret(file, 'api_key_enc', keyCache);
 }
@@ -150,9 +167,18 @@ export function unlockConfig(passphrase) {
   if (!pass) return { ok: false, error: '请输入主密码' };
   const hasKey = Boolean(file?.api_key_enc);
   const hasVision = Boolean(file?.vision_api_key_enc);
-  if (!hasKey && !hasVision) return { ok: false, error: '当前没有加密的 API Key' };
+  const hasTranslate = Object.values(file?.translate?.providers || {}).some((e) => e?.api_key_enc);
+  if (!hasKey && !hasVision && !hasTranslate) return { ok: false, error: '当前没有加密的 API Key' };
 
   let hit = false;
+  for (const [id, entry] of Object.entries(file?.translate?.providers || {})) {
+    if (!entry?.api_key_enc) continue;
+    const key = decryptSecret(entry.api_key_enc, pass);
+    if (key) {
+      unlockedTranslate.set(id, key);
+      hit = true;
+    }
+  }
   if (hasKey) {
     const key = decryptSecret(file.api_key_enc, pass);
     if (key) {
@@ -175,6 +201,7 @@ export function unlockConfig(passphrase) {
 export function lockConfig() {
   unlockedKey = '';
   unlockedVisionKey = '';
+  unlockedTranslate.clear();
 }
 
 function readJson(file) {
@@ -330,6 +357,22 @@ export function loadConfig() {
     cfg.extra_body = null;
   }
 
+  // 翻译引擎：把密文解成明文放进内存结构（解不开就留空，前端只看到 has_key）
+  const rawTranslate = (file && file.translate) || {};
+  const tProviders = {};
+  for (const [id, entry] of Object.entries(rawTranslate.providers || {})) {
+    if (!entry || typeof entry !== 'object') continue;
+    const enc = entry.api_key_enc;
+    tProviders[id] = {
+      base_url: String(entry.base_url || ''),
+      model: String(entry.model || ''),
+      app_id: String(entry.app_id || ''),
+      api_key: enc ? resolveTranslateKey(id, enc) : String(entry.api_key || ''),
+      encrypted: Boolean(enc),
+    };
+  }
+  cfg.translate = { provider: String(rawTranslate.provider || 'free'), providers: tProviders };
+
   cfg.ready = Boolean(cfg.base_url && cfg.model && cfg.api_key);
   cfg.vision_ready = Boolean(
     (cfg.vision_base_url || cfg.base_url) && cfg.vision_model && (cfg.vision_api_key || cfg.api_key),
@@ -385,6 +428,23 @@ export function publicConfig() {
     has_key: Boolean(cfg.api_key),
     has_vision_key: Boolean(cfg.vision_api_key),
     api_key_masked: cfg.api_key ? MASK : '',
+    translate: {
+      provider: cfg.translate?.provider || 'free',
+      providers: Object.fromEntries(
+        Object.entries(cfg.translate?.providers || {}).map(([id, e]) => [
+          id,
+          {
+            base_url: e.base_url,
+            model: e.model,
+            app_id: e.app_id,
+            has_key: Boolean(e.api_key),
+            encrypted: Boolean(e.encrypted),
+          },
+        ]),
+      ),
+      locked: Object.values(cfg.translate?.providers || {}).some((e) => e.encrypted && !e.api_key),
+      ready: Object.values(cfg.translate?.providers || {}).some((e) => Boolean(e.api_key)),
+    },
     locked: Boolean(cfg.locked),
     vision_locked: Boolean(cfg.vision_locked),
     ready: Boolean(cfg.ready),
@@ -394,6 +454,49 @@ export function publicConfig() {
     config_path: CONFIG_PATH,
     data_dir: DATA_DIR,
   };
+}
+
+/**
+ * 合并翻译引擎配置。
+ * - 明文 api_key → 用主密码加密成 api_key_enc（需要主密码）
+ * - 掩码或空串 → 不修改已有密文
+ * - clear_key: true → 删掉该服务商的 Key
+ */
+function mergeTranslateConfig(base, patch, passphrase) {
+  const prev = base && typeof base === 'object' ? base : { provider: 'free', providers: {} };
+  const out = {
+    provider: typeof patch.provider === 'string' && patch.provider ? patch.provider.trim() : prev.provider || 'free',
+    providers: {},
+  };
+  for (const [id, entry] of Object.entries(prev.providers || {})) {
+    out.providers[id] = { ...entry };
+  }
+  const incoming = patch.providers && typeof patch.providers === 'object' ? patch.providers : {};
+  for (const [id, entry] of Object.entries(incoming)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const next = { ...(out.providers[id] || {}) };
+    if (typeof entry.base_url === 'string') next.base_url = entry.base_url.trim().replace(/\/+$/, '');
+    if (typeof entry.model === 'string') next.model = entry.model.trim();
+    if (typeof entry.app_id === 'string') next.app_id = entry.app_id.trim();
+    if (entry.clear_key) {
+      delete next.api_key_enc;
+      delete next.api_key;
+      unlockedTranslate.delete(id);
+    } else if (typeof entry.api_key === 'string') {
+      const key = entry.api_key.trim();
+      const masked = key.includes('•') || /^\*+$/.test(key);
+      if (key && !masked) {
+        if (!passphrase) throw new Error(`保存「${id}」的翻译 Key 需要同时输入主密码（用于加密存储）`);
+        next.api_key_enc = encryptSecret(key, passphrase);
+        delete next.api_key;
+        unlockedTranslate.set(id, key);
+      }
+    }
+    // 明文绝不落盘
+    delete next.api_key;
+    out.providers[id] = next;
+  }
+  return out;
 }
 
 /**
@@ -486,6 +589,15 @@ export function saveConfig(patch = {}) {
       delete next.vision_api_key;
       unlockedVisionKey = plain;
     }
+  }
+
+  // 翻译段：next.translate 是 loadConfig 解出来的明文结构，不能直接落盘
+  if (patch.translate && typeof patch.translate === 'object') {
+    next.translate = mergeTranslateConfig(file.translate, patch.translate, passphrase);
+  } else if (file.translate) {
+    next.translate = file.translate;
+  } else {
+    delete next.translate;
   }
 
   fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });

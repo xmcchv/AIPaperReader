@@ -10,7 +10,11 @@
     "start": "node server/index.mjs",
     "dev": "node --watch server/index.mjs",
     "check": "node scripts/check.mjs",
+    "css:scope": "node scripts/scope-css.mjs",
+    "migrate:papertrans": "node scripts/migrate-papertrans.mjs",
+    "encrypt:translate-keys": "node scripts/encrypt-translate-keys.mjs",
     "smoke": "node scripts/smoke.mjs",
+    "test:translate-config": "node scripts/test-translate-config.mjs",
     "desktop": "electron .",
     "desktop:build": "node scripts/desktop-build.mjs --dir",
     "desktop:dist": "node scripts/desktop-build.mjs"

@@ -1,8 +1,8 @@
-# PaperLens · 论文精读 + 知识图谱
+# PaperLens · 翻译 + 精读 + 知识图谱
 
-同一个本地网页承载「原文 / AI 精读 / 交互图解」与「概念知识图谱」：左上角开关切换，论文与精读结果自动存入本机论文库，读完可一键把概念、方法链路与原文出处汇入图谱。**可配置任意 OpenAI 兼容模型 API**（Kimi / DeepSeek / OpenAI / 智谱 / Ollama / 自建端点）。
+同一个本地网页承载三个视图：**对照翻译**（PDF 分块 + 逐段中英）、**AI 精读**（原文 / 精读 / 交互图解）、**知识图谱**（概念与前置关系）。顶栏一键切换，论文只入库一次，三个视图读的是同一条记录。**可配置任意 OpenAI 兼容模型 API**（Kimi / DeepSeek / OpenAI / 智谱 / Ollama / 自建端点），翻译引擎另有十几家可选，免费引擎零配置。
 
-![布局](https://img.shields.io/badge/layout-精读%20%7C%20图谱-4da3ff) ![deps](https://img.shields.io/badge/dependencies-0-3ddc97) ![node](https://img.shields.io/badge/node-%3E%3D22.5-339933) ![storage](https://img.shields.io/badge/storage-SQLite%20(WAL)-4da3ff)
+![布局](https://img.shields.io/badge/layout-翻译%20%7C%20精读%20%7C%20图谱-4da3ff) ![deps](https://img.shields.io/badge/dependencies-0-3ddc97) ![node](https://img.shields.io/badge/node-%3E%3D22.5-339933) ![storage](https://img.shields.io/badge/storage-SQLite%20(WAL)-4da3ff)
 
 ## 快速开始
 
@@ -15,13 +15,23 @@ node server/index.mjs
 
 需要 **Node ≥ 22.5**（论文库与知识图谱使用 Node 内置的 `node:sqlite`，仍然零依赖）。没有安装步骤，也没有 `npm install`：服务端只用 Node 内置模块，前端是原生 HTML/CSS/ESM；pdf.js 与 KaTeX 已内置在 `public/vendor/`，离线也能解析 PDF 与渲染公式（本地文件缺失时才回退 CDN）。
 
-一个页面、两个视图：
+## 三个视图，一份论文库
 
-- 左侧 `精读 | 知识图谱` 开关切换（地址仍是同一个 `/`，`?view=kg` 记录状态）
-- 精读视图：原文 / AI 精读 / 交互图解三栏
-- 图谱视图：概念、前置关系、原文出处，可切分层图 / 思维导图 / 星空
+顶栏最左边是历史论文侧栏的开关，紧跟着 `翻译 | 精读 | 知识图谱` 三个按钮。地址始终是同一个 `/`，用 `?view=translate|paper|kg` 记录，刷新后停在原视图；`?paper=<id>` 之类的深链会直接落到对应视图。左侧侧栏在翻译与精读之间共用（图谱页有自己的概念栏），点一条就在当前视图打开同一篇。
 
-第一次启动时**未配置 API Key，会进入 demo 模式**——点「示例论文」→「开始精读」就能看到完整交互；图谱侧点「看看示例图谱」也能直接体验。
+| 视图 | 看什么 | 适合 |
+| --- | --- | --- |
+| 翻译 | 左 PDF 分块，右逐段英文 + 中文 | 快速过全文，或对照某一段 |
+| 精读 | 原文（PDF / 文本）· AI 精读 · 交互图解 | 吃透方法与创新点 |
+| 知识图谱 | 概念、前置关系、原文出处 | 把多篇论文织成一张网 |
+
+三个视图共享同一条论文记录，所以：
+
+- 翻译页打开 PDF 会**立刻入库**（按文件指纹去重，同一份 PDF 不会出现两条），侧栏马上能看到
+- **分块只算一次**：翻译页抽出的块存进论文库，精读页的 PDF 热区直接用同一份，于是「翻译卡片里那段」和「精读里点开的那块」是同一个矩形
+- **译文也只存一份**：精读页点段落时，卡片里直接给出中文对照
+
+第一次启动时**未配置 API Key，会进入 demo 模式**——点「示例论文」→「开始精读」就能看到完整交互；图谱侧点「看看示例图谱」也能直接体验。翻译视图用「免费自动」引擎时不需要任何 Key，开箱就能翻。
 
 接着点右上角「模型设置」，填三项：
 
@@ -74,6 +84,8 @@ $env:PAPERLENS_API_KEY='sk-xxx'; node server/index.mjs
 - **想换位置**：`PAPERLENS_CONFIG=/path/to/config.json` 指定配置文件；`PAPERLENS_DATA_DIR=/path/to/dir` 指定目录。
 - **不想落盘**：用 `PAPERLENS_API_KEY=sk-xxx`（配合 `PAPERLENS_BASE_URL` / `PAPERLENS_MODEL`）从环境变量注入。
 - 「模型设置」底部会显示当前实际读取的路径；仓库只保留不含 Key 的 `data/config.example.json`，`.gitignore` 已忽略真实配置文件。
+- **翻译引擎的 Key 也走同一套加密**：`config.json` 的 `translate.providers.<服务商>.api_key_enc`，与精读用的是**同一个主密码**，一次解锁两边都能用。免费引擎（微软 / 腾讯 / 火山 / Yandex / 谷歌）不需要 Key。
+- 旧版本把翻译 Key 明文存在数据库里：打开翻译页「设置」→ 选服务商 → 填主密码 → 保存即可自动加密迁移；也可以一次性批量迁：`npm run encrypt:translate-keys -- --passphrase 你的主密码`（加 `--dry` 只列出待迁移项）。
 
 #### 加密的边界（能防什么、防不住什么）
 
@@ -109,9 +121,9 @@ $env:PAPERLENS_API_KEY='sk-xxx'; node server/index.mjs
 - **PDF 原版**（上传 PDF 后默认）：pdf.js 渲染真实页面，原版排版、图、公式都在；上面叠加解析出的**章节/段落热区**——鼠标划过整段高亮，章节标题带紫色底并浮出标题名，图注单独标色；点击任意段落弹出该段原文（可复制、可「针对这段问 AI」），顶部可缩放/适应宽度
 - **文本**：把段落摊平成可读长文，适合连续阅读与复制
 
-两个视图由原文栏右上角的 `[PDF | 文本]` 切换。PDF 原始字节会存进浏览器 IndexedDB，**刷新页面后仍能回到 PDF 原版视图**（同一篇文件才会自动恢复，换文件就重新打开）。
+PDF 与文本这两种原文形态由原文栏右上角的 `[PDF | 文本]` 切换。PDF 原始字节存在本机论文库（浏览器 IndexedDB 只当离线缓存），**刷新、换浏览器后仍能回到原版视图**。
 
-段落框不是按行切的，也不会横跨整页：
+这些段落框就是**翻译页的分块**：抽取用的是同一份 `public/blocks.js`，结果存在论文记录的 `blocks_json` 里（翻译页打开过就用它的，没打开过则精读页自己算一次并落库）。所以不是两套各算各的，两个视图的框必然重合。抽取本身也不是按行切的，更不会横跨整页：
 
 1. 先按**基线**把文本项聚成行（同一行的上下标、公式才归得进一行）
 2. 行内按 x 间隙切「片段」——**双栏论文的左右两栏就在这里分开**
@@ -130,6 +142,14 @@ $env:PAPERLENS_API_KEY='sk-xxx'; node server/index.mjs
 | Attention（单栏） | 15 页全为单栏 | p50 65% | 0 |
 | ResNet（双栏） | 12/12 页 | p50 39%、p90 39%（= 栏宽） | 0 |
 | BERT（双栏） | 16/16 页 | p50 37%、p90 37%（= 栏宽） | 0 |
+
+**对照翻译**（翻译视图）
+- 左栏 PDF、右栏逐段卡片：上方英文原文、下方中文；点左侧色块在右栏定位，滚动 PDF 时右栏自动跟随
+- 分块与精读页共用同一套算法、同一份结果（`public/blocks.js`）：双栏、图表标注、跨栏续段、页眉页脚在抽取阶段就处理掉
+- 分块可以手动改：按段 / 按行 / 框选区域 / 依次点击指定阅读顺序，改动只影响这一篇，随时撤销
+- 翻译引擎十几家可选：免费自动（微软 → 腾讯 → 火山 → Yandex → 谷歌 依次回退）、微软 / 谷歌 / Yandex / 腾讯 / 火山、DeepL 官方、百度、DeepLX 自建，以及 DeepSeek / Gemini / Claude / Kimi / 硅基流动 / Ollama / 任意 OpenAI 兼容端点
+- 译文按**原文文本**缓存并跨论文复用：改分段、换顺序都不会让旧译文失效
+- 可导出 Markdown，或导出工程文件（`.papertrans.json`，不含 PDF 与 Key），换机器导入即可接着译
 
 **AI 精读**（流式）
 固定 7 个小节，边生成边渲染成卡片：一句话结论 / 要解决的问题 / 核心方法 / 关键创新 / 实验与结论 / 局限与可延伸 / 精读要点。生成中可随时点「停止」。渲染是增量式的：每个小节一张卡片，流式时只重画内容变化的那一张，不会整块闪动。公式用 KaTeX 渲染（`$...$` 行内、`$$...$$` 独立，本地库加载，加载失败时保留 LaTeX 原文）；模型写出的缺参数上下标（如 `Q^=`）会自动补空组，多行公式逐段渲染，个别坏公式只保留局部原文，不会拖垮整块。思考型模型（DeepSeek 等）的思维链走 `reasoning_content`，单独接出来只在状态栏显示进度，不会混进正文。
@@ -165,8 +185,16 @@ server/
     llm.mjs          OpenAI 兼容客户端：流式 SSE、JSON 抽取、视觉输入
     http.mjs         JSON / SSE / 静态文件工具
   paper/
-    routes.mjs       论文库 API（/api/paper/*）
-    library.mjs      papers.db：正文 / 精读 / 结构化 / 追问 / PDF
+    routes.mjs       论文库 API（/api/paper/*，含 open / blocks / translate）
+    library.mjs      papers.db：正文 / PDF / 分块 / 译文 / 精读 / 结构化 / 追问
+    db.mjs           单库连接与建表（papers / tr_cache / seg_cache / prefs）
+    store-adapter.mjs 翻译页的旧接口 /api/store/* → 论文库
+  translate/
+    routes.mjs       /api/translate/*（批量翻译 / 测试连接 / AI 分段 / 服务目录 / 凭据保存）
+    translate.mjs    十几家翻译服务的协议适配、缓存、回退链
+    segment.mjs      AI 分段（只返回行号区间，原文由前端拼）
+    providers.mjs    翻译服务目录（前后端共用同一份定义）
+    cache.mjs        译文 / 分段缓存（落在 papers.db）
   kg/
     routes.mjs       /api/kg/* 路由、导入编排、PaperLens 适配
     store.mjs        多图谱 SQLite 存储、检索、快照
@@ -174,14 +202,22 @@ server/
     web.mjs          网页与 arXiv 正文抓取
     demo.mjs         内置示例图谱
 public/
-  index.html         单页外壳：精读视图 + 图谱视图 + 左上角开关
+  index.html         单页外壳：翻译 / 精读 / 图谱三个视图 + 共享侧栏
   app.js             精读状态机、论文库持久化、一键推送
-  shell.js           视图切换（?view=kg）
+  shell.js           三视图切换（?view=translate|paper|kg）+ 侧栏开合
+  shell.css          外壳布局：侧栏从顶栏下方展开、内容让位
+  sidebar.css        历史论文侧栏样式（由 scope-css 生成）
+  theme.css          统一配色（暖白 / 中性深）
+  blocks.js          PDF 分块抽取（翻译页与精读页共用）+ 整篇提取
   text.js            原文分段、精读 markdown 解析（纯函数）
-  pdfview.js         PDF 原版渲染 + 段落热区
+  pdfview.js         PDF 原版渲染 + 段落热区 + 点段落看中文对照
   diagram.js         交互式 SVG 图解渲染器
   math.js            KaTeX 公式渲染（本地优先，CDN 回退）
   report.js          导出报告：HTML 模板、iframe 打印
+  translate/
+    app.js                         翻译页状态机、分块编辑、翻译调度
+    styles.raw.css                 翻译页原始样式（作用域化的输入）
+    styles.css                     作用域化到 #view-translate 的样式（生成物）
   kg/
     app.js graph.js starfield.js   知识图谱前端
     styles.css                     图谱原始样式
@@ -192,6 +228,11 @@ public/
 scripts/
   check.mjs                        跨平台语法检查（node --check）
   smoke.mjs                        临时数据目录启动 + 关键接口冒烟
+  scope-css.mjs                    把翻译页样式作用域化（npm run css:scope）
+  migrate-papertrans.mjs           旧 .cache/papertrans.sqlite → papers.db
+  encrypt-translate-keys.mjs       把旧明文翻译 Key 加密进 config.json
+  test-translate-config.mjs        凭据加密的回归测试
+  browser-check.mjs / shot.mjs     无头 Chrome 冒烟与截图（开发用）
 .github/workflows/ci.yml           Ubuntu / macOS / Windows 矩阵
 tools/restore-from-reports.mjs     从精读报告还原图谱
 docs/开发纪要.md                   图谱设计决策与运维记录
@@ -214,11 +255,21 @@ data/config.example.json           配置模板（实际配置在 ~/.paperlens/c
 | POST | `/api/export/summary` | 导出报告前的执行摘要 + 追问要点；demo/失败时返回本地归纳 |
 | POST | `/api/paper/fetch` | 按 arXiv 编号/链接抓取论文 |
 | GET | `/api/sample` | 内置示例论文 |
-| GET | `/api/paper/library` | 论文库列表（标题 / 字数 / 是否有精读 / 是否有 PDF） |
+| GET | `/api/paper/library` | 论文库列表（标题 / 页数 / 字数 / 分块数 / 译文数 / 是否有精读 / 是否有 PDF） |
+| GET | `/api/paper/stats` | 论文库用量（篇数 / PDF 数 / 译文缓存条数） |
+| POST | `/api/paper/open` | 打开 PDF：原始字节 + `?hash=&name=`，按指纹去重，命中返回 `{reused:true}` |
+| POST | `/api/paper/blocks` | 写入分块（`{id, hash, blocks, overrides}`），精读页消费同一份 |
+| POST | `/api/paper/translate` | 增量写译文（`[{text, zh}]`，按原文文本为 key） |
 | POST | `/api/paper/save` | 新建或更新论文（正文 / 精读 / 结构化 / 追问） |
 | GET | `/api/paper/get?id=` | 读取一篇论文的完整记录 |
 | POST | `/api/paper/delete` | 从论文库删除 |
 | POST/GET | `/api/paper/pdf` | 保存 / 读取论文 PDF 原件 |
+| GET | `/api/translate/providers` | 翻译服务目录（不含任何密钥） |
+| GET | `/api/translate/config` | 当前翻译引擎与各服务商是否已存 Key（只回 `has_key`） |
+| POST | `/api/translate/config` | 保存翻译引擎配置；Key 用主密码加密后写入 `config.json` |
+| POST | `/api/translate/batch` | 批量翻译（单次 ≤40 段），返回 `{translations, stats}` |
+| POST | `/api/translate/test` | 测试翻译引擎连通性，回样本译文与耗时 |
+| POST | `/api/translate/segment` | AI 分段：只返回行号区间，原文由前端拼装 |
 | GET | `/api/kg/state` | 图谱整库 + 模型配置 + 存储信息（打开页面时一次请求） |
 | GET | `/api/kg/graphs` | 图谱（工作区）列表 |
 | POST | `/api/kg/graphs/{create,rename,delete,activate}` | 新建 / 改名 / 删除 / 切换图谱 |
@@ -229,6 +280,7 @@ data/config.example.json           配置模板（实际配置在 ~/.paperlens/c
 | POST | `/api/kg/edges`、`/api/kg/edges/delete` | 手工加 / 删关系 |
 | GET | `/api/kg/search?q=` | 概念与资料正文检索 |
 | GET | `/api/health` | 存活探测（同一进程同时报告精读与图谱） |
+| 兼容 | `/api/store/*` | 翻译页旧接口，内部全部映射到论文库（`project id === paperId`） |
 
 `/api/analyze` 的 SSE 帧格式：
 
@@ -239,11 +291,14 @@ data: {"type":"done","mode":"live"}
 
 ## 说明与边界
 
-- 服务只监听 `127.0.0.1`。模型配置在 `~/.paperlens/config.json`（API Key 加密，不含明文）；论文库、图谱、PDF、每日快照都在 `~/.paperlens/data/`，可用 `PAPERLENS_DATA_DIR` 换位置。部署场景建议用 `PAPERLENS_API_KEY` 环境变量，不要落盘。
+- 服务只监听 `127.0.0.1`。模型配置在 `~/.paperlens/config.json`（API Key 与翻译 Key 都加密，不含明文）；论文库、图谱、PDF、每日快照都在 `~/.paperlens/data/`，可用 `PAPERLENS_DATA_DIR` 换位置。部署场景建议用 `PAPERLENS_API_KEY` 环境变量，不要落盘。
+- **数据层是一个 SQLite**：`~/.paperlens/data/papers.db` 里放着 `papers`（正文 / PDF 路径 / 分块 / 译文 / 精读 / 结构化 / 追问）、`tr_cache`（译文缓存）、`seg_cache`（AI 分段缓存）、`prefs`（界面偏好）。PDF 原件落在 `data/papers/<id>.pdf`。备份时把整个 `~/.paperlens/data/` 拷走即可。
+- 知识图谱仍然**一图一库**（`data/graphs/<id>.db`）：单图可独立导出/分享，单图损坏也不会拖累其它图。
 - 需要 **Node ≥ 22.5**（`node:sqlite` 的版本门槛）。Node 22.5–23.3 要加 `--experimental-sqlite`。
 - 仓库不跟踪任何含 Key 或本地数据的文件：`.gitignore` 已忽略 `data/config.json`、`data/graphs/`、`data/backups/`、`data/papers/`、`data/*.db`、`.env*`。如果不小心提交过 Key：仅删除文件不够，请立即轮换 Key 并清理 Git 历史（`git filter-repo`）。
 - 精读正文会按长度截断（默认保留头 70% + 尾 30%，约 26000 字符），超长论文建议分章精读。
 - pdf.js 与 KaTeX 已内置在 `public/vendor/`，离线可解析 PDF、渲染公式；只有本地文件缺失时才回退 CDN。解析后的 PDF 会存入本机论文库，换浏览器也能回到原版视图。
+- 翻译页的免费引擎走的是各家网页接口，它们随时可能改协议或限流：失败会自动换下一家，全失败时给出明确报错，不会静默产出空译文。正式批量翻译建议配一个大模型或 DeepL。
 - arXiv 全文依赖 `arxiv.org/html/<id>` 是否存在，老论文可能只有摘要，此时会提示直接粘贴正文。
 - 图解质量取决于模型是否按约定结构输出；结构不合规时会被归一化兜底，缺失部分在图上表现为节点无 detail。
 - 图谱侧：纯前端渲染 / 需要登录的网页抓不到正文；图片必须配视觉模型才能抽概念；概念按名称 + 别名归一化合并；一个图谱适合几百个节点，上千节点时 SVG 渲染会变慢。
@@ -311,5 +366,8 @@ npm run smoke   # 临时数据目录启动服务，检查页面、配置、论�
 
 ## 快捷键
 
+- `Ctrl/Cmd + B`：展开 / 收起历史论文侧栏（翻译与精读页通用）
+- `Ctrl/Cmd + O`：在翻译视图中打开 PDF
+- `Ctrl/Cmd + K`：图谱视图聚焦搜索框
 - `Ctrl/Cmd + Enter`：开始 / 停止精读
 - 追问框 `Enter` 发送，`Shift + Enter` 换行
