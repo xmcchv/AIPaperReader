@@ -934,6 +934,11 @@ async function loadStructure() {
 
 /* ---------------------------------- 追问 ---------------------------------- */
 
+/** 追问回答渲染成 Markdown；流式期间未闭合的语法由 renderBlocks/inlineMd 原样保留 */
+function paintAskAnswer(el, text) {
+  el.innerHTML = renderBlocks(String(text || '').split('\n'));
+}
+
 /** 追问对话同时存进 state.askThread，导出报告时要用（DOM 只是渲染结果） */
 function pushAsk(role, text, quote = '') {
   const thread = $('#ask-thread');
@@ -945,13 +950,16 @@ function pushAsk(role, text, quote = '') {
     q.textContent = quote.length > 120 ? `${quote.slice(0, 120)}…` : quote;
     div.appendChild(q);
   }
-  const content = document.createElement('span');
-  content.textContent = text;
+  const content = document.createElement('div');
+  if (role === 'user') content.textContent = text;
+  else paintAskAnswer(content, text);
   div.appendChild(content);
   thread.appendChild(div);
   thread.scrollTop = thread.scrollHeight;
   const entry = { role, text: String(text || ''), quote: String(quote || '') };
   state.askThread.push(entry);
+  // 历史消息恢复时补渲染公式（流式输出中途不渲染，避免 KaTeX 打断增量文本）
+  if (role !== 'user') renderMathIn(content);
   schedulePaperSave(1200);
   return { el: content, entry };
 }
@@ -993,7 +1001,7 @@ async function ask(question, selection = '') {
       if (evt.type === 'delta') {
         const pending = answerEntry.text === '…' || answerEntry.text === '思考中…';
         answerEntry.text = pending ? evt.text : answerEntry.text + evt.text;
-        target.textContent = answerEntry.text;
+        paintAskAnswer(target, answerEntry.text);
         $('#ask-thread').scrollTop = $('#ask-thread').scrollHeight;
       } else if (evt.type === 'thinking') {
         if (answerEntry.text === '…') {
@@ -1011,6 +1019,8 @@ async function ask(question, selection = '') {
     answerEntry.error = true;
     target.textContent = answerEntry.text;
   }
+  // 流式结束后再渲染公式：写到一半的 $...$ 不会被 KaTeX 拆坏
+  if (!answerEntry.error) await renderMathIn(target);
   // 完整回答已经写回 answerEntry，补一次保存
   schedulePaperSave(200);
 }
@@ -1649,6 +1659,42 @@ function bindEvents() {
     }
   };
   $('#btn-ask-clear').onclick = clearAskThread;
+
+  // 追问区分割线：上下拖动调整高度
+  const askDock = $('#ask-dock');
+  const askResizer = $('#ask-resizer');
+  const askPane = askDock.parentElement;
+  const ASK_MIN_H = 120;
+  const askMaxH = () => {
+    const paneHeight = askPane.clientHeight;
+    // 上限既不超过面板的 70%，也给上方正文至少留 160px
+    return Math.max(ASK_MIN_H, Math.min(paneHeight * 0.7, paneHeight - 160));
+  };
+  let askDragging = false;
+  askResizer.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    askDragging = true;
+    askResizer.classList.add('dragging');
+    askDock.classList.add('resizing');
+    askResizer.setPointerCapture(ev.pointerId);
+    document.body.style.cursor = 'row-resize';
+  });
+  askResizer.addEventListener('pointermove', (ev) => {
+    if (!askDragging) return;
+    const rect = askPane.getBoundingClientRect();
+    const next = Math.min(Math.max(rect.bottom - ev.clientY, ASK_MIN_H), askMaxH());
+    askDock.style.height = `${Math.round(next)}px`;
+  });
+  const endAskDrag = () => {
+    if (!askDragging) return;
+    askDragging = false;
+    askResizer.classList.remove('dragging');
+    askDock.classList.remove('resizing');
+    document.body.style.cursor = '';
+  };
+  askResizer.addEventListener('pointerup', endAskDrag);
+  askResizer.addEventListener('pointercancel', endAskDrag);
 
   // 选中原文 → 浮动「问 AI」
   const selTool = $('#sel-tool');
