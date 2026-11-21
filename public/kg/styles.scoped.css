@@ -67,39 +67,6 @@
 }.kg-view button, .kg-view input, .kg-view textarea, .kg-view select {
   font: inherit;
   color: inherit;
-}/* ---------------------------------- 顶栏 ---------------------------------- */.kg-view .topbar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 0 16px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-  z-index: 10;
-}.kg-view .brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}.kg-view .brand-mark {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 32% 32%, #9ed0ff, var(--accent) 58%, transparent 72%);
-  box-shadow: 0 0 14px rgba(77, 163, 255, 0.55);
-  flex: none;
-}.kg-view .brand-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}.kg-view .brand-text strong {
-  font-size: 15px;
-  letter-spacing: 0.02em;
-}.kg-view .brand-text span {
-  font-size: 11px;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }/* ------------------------------ 图谱切换器 ------------------------------ */.kg-view .graph-switch {
   display: flex;
   align-items: center;
@@ -238,10 +205,6 @@
 }.kg-view .stats b {
   color: var(--text);
   font-weight: 600;
-}.kg-view .actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }/* ---------------------------------- 按钮 ---------------------------------- */.kg-view .btn {
   border-radius: 9px;
   border: 1px solid var(--border);
@@ -989,8 +952,6 @@
   }.kg-view .stage {
     grid-column: 1;
   }.kg-view .detail {
-    display: none;
-  }.kg-view .brand-text span {
     display: none;
   }
 }

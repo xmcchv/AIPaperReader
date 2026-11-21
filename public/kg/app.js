@@ -4,6 +4,7 @@
  */
 import { GraphView, edgeLabel } from './graph.js';
 import { StarfieldView } from './starfield.js';
+import { registerTopbarActions } from '../topbar.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -784,8 +785,11 @@ function saveView() {
 function bindEvents() {
   // 顶部
   $('#kg-btn-import').addEventListener('click', () => openImport());
-  $('#kg-btn-settings').addEventListener('click', () => openSettings());
-  $('#kg-btn-theme').addEventListener('click', toggleTheme);
+  // 嵌入主界面时，设置 / 主题按钮由共用顶栏统一渲染并派发到这里
+  registerTopbarActions('kg', { settings: () => openSettings(), theme: toggleTheme });
+  // 独立 /kg 页面仍使用自带顶栏，保留原有按钮绑定
+  $('#kg-btn-settings')?.addEventListener('click', () => openSettings());
+  $('#kg-btn-theme')?.addEventListener('click', toggleTheme);
 
   // 图谱切换 / 管理
   $('#kg-graph-switch').addEventListener('click', async () => {

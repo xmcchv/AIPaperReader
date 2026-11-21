@@ -4,6 +4,7 @@ import { extractDocumentBlocks } from './blocks.js';
 import { renderMathIn } from './math.js';
 import { getReportHtml, printReport, qaPairs, reportFilename, saveReportHtml } from './report.js';
 import { escapeHtml, isSectionTitle, parseReading, renderBlocks, splitParagraphs } from './text.js';
+import { registerTopbarActions } from './topbar.js';
 
 /* --------------------------------- 基础工具 -------------------------------- */
 
@@ -1519,14 +1520,16 @@ function bindEvents() {
     openDialog('#dlg-open');
     switchOpenTab('arxiv');
   };
-  $('#btn-settings').onclick = () => {
-    fillSettings();
-    openDialog('#dlg-settings');
-  };
-  $('#btn-theme').onclick = () => {
-    applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
-    setTimeout(() => diagram.fit(), 50);
-  };
+  registerTopbarActions('paper', {
+    settings: () => {
+      fillSettings();
+      openDialog('#dlg-settings');
+    },
+    theme: () => {
+      applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
+      setTimeout(() => diagram.fit(), 50);
+    },
+  });
 
   $('#btn-sample-2').onclick = loadSample;
 

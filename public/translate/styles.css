@@ -45,30 +45,6 @@ html[data-theme='dark'] #view-translate { --bg: #141518;
   overflow: hidden;
   -webkit-font-smoothing: antialiased; }
 #view-translate button, #view-translate input, #view-translate select { font: inherit; color: inherit; }
-#view-translate .topbar { display: flex;
-  align-items: center;
-  gap: 14px;
-  height: 56px;
-  flex: 0 0 56px;
-  padding: 0 14px 0 16px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
-  position: relative;
-  z-index: 30; }
-#view-translate .brand { display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--accent);
-  flex: 0 0 auto; }
-#view-translate .brand-name { font-size: 15px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  color: var(--ink); }
-#view-translate .brand-sub { font-size: 11.5px;
-  color: var(--ink-3);
-  padding-left: 8px;
-  border-left: 1px solid var(--line);
-  margin-left: 2px; }
 #view-translate .file-chip { display: flex;
   align-items: center;
   gap: 7px;
@@ -86,7 +62,6 @@ html[data-theme='dark'] #view-translate { --bg: #141518;
   background: #22c55e;
   flex: 0 0 auto; }
 #view-translate .spacer { flex: 1 1 auto; }
-#view-translate .actions { display: flex; align-items: center; gap: 8px; }
 #view-translate .btn { display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -642,5 +617,5 @@ body.hide-zh #view-translate .card .zh, body.hide-zh #view-translate .zh-box { d
   #view-translate .split { flex-direction: column; }
   #view-translate .pane-pdf { flex: 1 1 55%; }
   #view-translate .divider { display: none; }
-  #view-translate .brand-sub, #view-translate .hint { display: none; }
+  #view-translate .hint { display: none; }
 }

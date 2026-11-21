@@ -50,29 +50,11 @@ body {
 
 /* ------------------------------- 顶栏 ---------------------------------- */
 
-.topbar {
+.app-topbar {
   background: color-mix(in srgb, var(--panel) 86%, transparent);
   backdrop-filter: saturate(1.6) blur(12px);
   -webkit-backdrop-filter: saturate(1.6) blur(12px);
   border-bottom: 1px solid var(--line);
-}
-
-.brand-mark {
-  text-shadow: none;
-  font-size: 18px;
-  color: var(--accent);
-}
-
-.brand-text strong {
-  font-size: 14.5px;
-  font-weight: 600;
-  letter-spacing: 0.1px;
-}
-
-.brand-text small {
-  font-size: 10.5px;
-  letter-spacing: 0.3px;
-  color: var(--muted);
 }
 
 /* 视图切换：从「三颗药丸」改成真正的分段控件 */
@@ -417,13 +399,6 @@ input:focus {
 }
 
 /* ----------------------------- 翻译页 ---------------------------------- */
-
-#view-translate .topbar {
-  background: color-mix(in srgb, var(--panel) 86%, transparent);
-  backdrop-filter: saturate(1.6) blur(12px);
-  -webkit-backdrop-filter: saturate(1.6) blur(12px);
-  border-bottom: 1px solid var(--line);
-}
 
 #view-translate .btn {
   height: 32px;
@@ -858,8 +833,7 @@ input:focus {
 }
 
 /* 顶栏右侧操作：主按钮与次按钮之间留出呼吸 */
-#view-translate .topbar .btn + .btn,
-.topbar .btn + .btn {
+.app-topbar .btn + .btn {
   margin-left: 2px;
 }
 

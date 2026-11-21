@@ -95,51 +95,6 @@ code {
   border-radius: 5px;
 }
 
-/* ---------------------------------- 顶栏 ---------------------------------- */
-
-.topbar {
-  height: var(--topbar-h);
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 0 16px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
-  position: relative;
-  z-index: 20;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  flex-shrink: 0;
-}
-
-.brand-mark {
-  font-size: 20px;
-  color: var(--accent);
-  line-height: 1;
-  text-shadow: 0 0 16px var(--accent-soft);
-}
-
-.brand-text {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.15;
-}
-
-.brand-text strong {
-  font-size: 15px;
-  letter-spacing: 0.2px;
-}
-
-.brand-text small {
-  font-size: 10.5px;
-  color: var(--muted);
-  letter-spacing: 0.4px;
-}
-
 /* 论文标题：外观与翻译页的 .file-chip 一致（胶囊 + 小圆点 + 单行省略） */
 .title-chip {
   display: flex;
@@ -221,14 +176,6 @@ code {
   border-color: var(--accent);
   background: var(--bg-soft);
   color: var(--text);
-}
-
-.topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  margin-left: auto;
 }
 
 .badge {
@@ -1569,10 +1516,6 @@ button.badge.clickable:hover {
 /* ---------------------------------- 响应式 -------------------------------- */
 
 @media (max-width: 1080px) {
-  .brand-text small {
-    display: none;
-  }
-
   .workspace {
     grid-template-columns: 1fr;
     height: calc(100vh - var(--topbar-h) - 44px);
@@ -1618,20 +1561,6 @@ button.badge.clickable:hover {
 }
 
 @media (max-width: 620px) {
-  .topbar {
-    gap: 8px;
-    padding: 0 10px;
-  }
-
-  .brand-text strong {
-    font-size: 13.5px;
-  }
-
-  .topbar-actions .btn.ghost {
-    padding: 5px 8px;
-    font-size: 12px;
-  }
-
   #btn-run {
     font-size: 12px;
     padding: 6px 10px;
@@ -1662,37 +1591,6 @@ button.badge.clickable:hover {
 
 html[data-view='kg'] #view-paper {
   display: none;
-}
-
-.app-switch {
-  flex: none;
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
-  border-radius: 999px;
-}
-
-.app-switch button {
-  border: 0;
-  background: transparent;
-  color: inherit;
-  opacity: 0.62;
-  font: inherit;
-  font-size: 12.5px;
-  padding: 4px 11px;
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.app-switch button:hover {
-  opacity: 1;
-}
-
-.app-switch button.active {
-  background: var(--accent, #4da3ff);
-  color: #fff;
-  opacity: 1;
 }
 
 .library-list {
