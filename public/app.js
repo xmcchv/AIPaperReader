@@ -3,7 +3,8 @@ import { createPdfView, openPdfDocument } from './pdfview.js';
 import { extractDocumentBlocks } from './blocks.js';
 import { renderMathIn } from './math.js';
 import { getReportHtml, printReport, qaPairs, reportFilename, saveReportHtml } from './report.js';
-import { escapeHtml, isSectionTitle, parseReading, renderBlocks, splitParagraphs } from './text.js';
+import { escapeHtml, isSectionTitle, markAskCitations, parseReading, renderBlocks, splitParagraphs } from './text.js';
+import { registerTopbarActions } from './topbar.js';
 
 /* --------------------------------- 基础工具 -------------------------------- */
 
@@ -12,6 +13,8 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 const LS_PAPER = 'paperlens.paper';
 const LS_THEME = 'paperlens.theme';
+const LS_DIAGRAM = 'paperlens.diagramCollapsed';
+const LS_PAPER_WIDTH = 'paperlens.paperWidth';
 
 /** 39,755 → 39.8k，给原文栏那行统计省宽度 */
 function formatCount(n) {
@@ -38,6 +41,7 @@ const state = {
   aborted: false,
   selection: '',
   askThread: [],
+  webSearch: localStorage.getItem('paperlens.askWeb') !== '0',
   hasPdf: false,
   pdfPages: 0,
   paperView: 'text',
@@ -934,6 +938,11 @@ async function loadStructure() {
 
 /* ---------------------------------- 追问 ---------------------------------- */
 
+/** 追问回答渲染成 Markdown；流式期间未闭合的语法由 renderBlocks/inlineMd 原样保留 */
+function paintAskAnswer(el, text) {
+  el.innerHTML = markAskCitations(renderBlocks(String(text || '').split('\n')));
+}
+
 /** 追问对话同时存进 state.askThread，导出报告时要用（DOM 只是渲染结果） */
 function pushAsk(role, text, quote = '') {
   const thread = $('#ask-thread');
@@ -945,13 +954,16 @@ function pushAsk(role, text, quote = '') {
     q.textContent = quote.length > 120 ? `${quote.slice(0, 120)}…` : quote;
     div.appendChild(q);
   }
-  const content = document.createElement('span');
-  content.textContent = text;
+  const content = document.createElement('div');
+  if (role === 'user') content.textContent = text;
+  else paintAskAnswer(content, text);
   div.appendChild(content);
   thread.appendChild(div);
   thread.scrollTop = thread.scrollHeight;
   const entry = { role, text: String(text || ''), quote: String(quote || '') };
   state.askThread.push(entry);
+  // 历史消息恢复时补渲染公式（流式输出中途不渲染，避免 KaTeX 打断增量文本）
+  if (role !== 'user') renderMathIn(content);
   schedulePaperSave(1200);
   return { el: content, entry };
 }
@@ -988,18 +1000,23 @@ async function ask(question, selection = '') {
       paper: state.paper,
       selection,
       reading: state.readingText,
+      structure: state.structure,
+      askThread: state.askThread.slice(-6),
+      webSearch: state.webSearch,
       question,
     }, (evt) => {
       if (evt.type === 'delta') {
         const pending = answerEntry.text === '…' || answerEntry.text === '思考中…';
         answerEntry.text = pending ? evt.text : answerEntry.text + evt.text;
-        target.textContent = answerEntry.text;
+        paintAskAnswer(target, answerEntry.text);
         $('#ask-thread').scrollTop = $('#ask-thread').scrollHeight;
       } else if (evt.type === 'thinking') {
         if (answerEntry.text === '…') {
           answerEntry.text = '思考中…';
           target.textContent = answerEntry.text;
         }
+      } else if (evt.type === 'notice') {
+        toast(evt.message || '提示', 3600);
       } else if (evt.type === 'error') {
         answerEntry.text = `出错了：${evt.message}`;
         answerEntry.error = true;
@@ -1011,6 +1028,8 @@ async function ask(question, selection = '') {
     answerEntry.error = true;
     target.textContent = answerEntry.text;
   }
+  // 流式结束后再渲染公式：写到一半的 $...$ 不会被 KaTeX 拆坏
+  if (!answerEntry.error) await renderMathIn(target);
   // 完整回答已经写回 answerEntry，补一次保存
   schedulePaperSave(200);
 }
@@ -1475,6 +1494,100 @@ function switchPaneIfNarrow(name) {
   if (window.innerWidth <= 1080) switchPane(name);
 }
 
+/* --------------------------- 图解栏折叠（两栏模式） --------------------------- */
+
+/** 应用折叠状态到界面；persist=true 时同时写入 localStorage（用户主动切换才写） */
+function setDiagramCollapsed(collapsed, { persist = true } = {}) {
+  document.body.classList.toggle('diagram-collapsed', collapsed);
+  $('#view-paper .workspace')?.classList.toggle('diagram-collapsed', collapsed);
+  if (persist) localStorage.setItem(LS_DIAGRAM, collapsed ? '1' : '0');
+  const btn = $('#btn-diagram-toggle');
+  if (btn) {
+    btn.setAttribute('aria-pressed', String(!collapsed));
+    btn.title = collapsed ? '展开交互图解（三栏）' : '收起交互图解（两栏）';
+  }
+  // 折叠时若在放大态，先还原，避免再展开时残留 fixed 定位
+  if (collapsed) {
+    const pane = $('.pane[data-pane="diagram"]');
+    if (pane?.classList.contains('zoom')) {
+      pane.classList.remove('zoom');
+      $('#btn-diagram-zoom').textContent = '⤢';
+    }
+  }
+  setTimeout(() => diagram.fit(), 80);
+}
+
+function toggleDiagram() {
+  setDiagramCollapsed(!document.body.classList.contains('diagram-collapsed'));
+}
+
+/* --------------------------- 栏间拖动（原文 ↔ 精读） --------------------------- */
+
+const PAPER_MIN = 280;
+const READING_MIN = 300;
+const DIAGRAM_MIN = 300;
+const DEFAULT_PAPER_PCT = 34;
+
+function applyPaperWidth(pct, { persist = true } = {}) {
+  const workspace = $('#view-paper .workspace');
+  if (!workspace) return;
+  const value = Math.max(10, Math.min(80, Number(pct) || DEFAULT_PAPER_PCT));
+  workspace.style.setProperty('--paper-w', `${value}%`);
+  $('#pane-resizer')?.setAttribute('aria-valuenow', String(Math.round(value)));
+  if (persist) localStorage.setItem(LS_PAPER_WIDTH, String(value));
+}
+
+function reflowAfterResize() {
+  diagram.fit();
+  if (state.hasPdf && state.paperView === 'pdf' && !$('#paper-pdf')?.hidden) {
+    pdfView.fit().then(updatePdfZoomLabel);
+  }
+}
+
+function initPaneResizer() {
+  const resizer = $('#pane-resizer');
+  const workspace = $('#view-paper .workspace');
+  if (!resizer || !workspace) return;
+
+  let dragging = false;
+  let startX = 0;
+  let startW = 0;
+  let workspaceW = 0;
+  let maxPaper = 0;
+
+  resizer.addEventListener('pointerdown', (ev) => {
+    // 窄屏隐藏了手柄，这里也挡一道
+    if (ev.button !== 0 || window.innerWidth <= 1080) return;
+    ev.preventDefault();
+    dragging = true;
+    startX = ev.clientX;
+    startW = $('#view-paper .pane[data-pane="paper"]').getBoundingClientRect().width;
+    workspaceW = workspace.getBoundingClientRect().width;
+    const diagramMin = document.body.classList.contains('diagram-collapsed') ? 0 : DIAGRAM_MIN;
+    maxPaper = workspaceW - READING_MIN - diagramMin;
+    resizer.classList.add('dragging');
+    document.body.classList.add('pane-resizing');
+    resizer.setPointerCapture(ev.pointerId);
+  });
+
+  resizer.addEventListener('pointermove', (ev) => {
+    if (!dragging) return;
+    const nextPx = Math.min(Math.max(startW + (ev.clientX - startX), PAPER_MIN), Math.max(PAPER_MIN, maxPaper));
+    applyPaperWidth((nextPx / workspaceW) * 100, { persist: false });
+  });
+
+  const endDrag = () => {
+    if (!dragging) return;
+    dragging = false;
+    resizer.classList.remove('dragging');
+    document.body.classList.remove('pane-resizing');
+    localStorage.setItem(LS_PAPER_WIDTH, (workspace.style.getPropertyValue('--paper-w') || `${DEFAULT_PAPER_PCT}%`).replace('%', ''));
+    reflowAfterResize();
+  };
+  resizer.addEventListener('pointerup', endDrag);
+  resizer.addEventListener('pointercancel', endDrag);
+}
+
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   localStorage.setItem(LS_THEME, theme);
@@ -1509,14 +1622,16 @@ function bindEvents() {
     openDialog('#dlg-open');
     switchOpenTab('arxiv');
   };
-  $('#btn-settings').onclick = () => {
-    fillSettings();
-    openDialog('#dlg-settings');
-  };
-  $('#btn-theme').onclick = () => {
-    applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
-    setTimeout(() => diagram.fit(), 50);
-  };
+  registerTopbarActions('paper', {
+    settings: () => {
+      fillSettings();
+      openDialog('#dlg-settings');
+    },
+    theme: () => {
+      applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
+      setTimeout(() => diagram.fit(), 50);
+    },
+  });
 
   $('#btn-sample-2').onclick = loadSample;
 
@@ -1650,6 +1765,59 @@ function bindEvents() {
   };
   $('#btn-ask-clear').onclick = clearAskThread;
 
+  // 联网增强开关：默认开，状态存 localStorage
+  const webToggle = $('#btn-ask-web');
+  const paintWebToggle = () => {
+    webToggle.classList.toggle('active', state.webSearch);
+    webToggle.setAttribute('aria-pressed', String(state.webSearch));
+    webToggle.title = state.webSearch
+      ? '已开启：可用网络补充论文之外的信息（点击关闭）'
+      : '已关闭：只依据论文内容回答（点击开启）';
+  };
+  paintWebToggle();
+  webToggle.onclick = () => {
+    state.webSearch = !state.webSearch;
+    localStorage.setItem('paperlens.askWeb', state.webSearch ? '1' : '0');
+    paintWebToggle();
+    toast(state.webSearch ? '联网增强已开启' : '联网增强已关闭，只依据论文回答');
+  };
+
+  // 追问区分割线：上下拖动调整高度
+  const askDock = $('#ask-dock');
+  const askResizer = $('#ask-resizer');
+  const askPane = askDock.parentElement;
+  const ASK_MIN_H = 120;
+  const askMaxH = () => {
+    const paneHeight = askPane.clientHeight;
+    // 上限既不超过面板的 70%，也给上方正文至少留 160px
+    return Math.max(ASK_MIN_H, Math.min(paneHeight * 0.7, paneHeight - 160));
+  };
+  let askDragging = false;
+  askResizer.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    askDragging = true;
+    askResizer.classList.add('dragging');
+    askDock.classList.add('resizing');
+    askResizer.setPointerCapture(ev.pointerId);
+    document.body.style.cursor = 'row-resize';
+  });
+  askResizer.addEventListener('pointermove', (ev) => {
+    if (!askDragging) return;
+    const rect = askPane.getBoundingClientRect();
+    const next = Math.min(Math.max(rect.bottom - ev.clientY, ASK_MIN_H), askMaxH());
+    askDock.style.height = `${Math.round(next)}px`;
+  });
+  const endAskDrag = () => {
+    if (!askDragging) return;
+    askDragging = false;
+    askResizer.classList.remove('dragging');
+    askDock.classList.remove('resizing');
+    document.body.style.cursor = '';
+  };
+  askResizer.addEventListener('pointerup', endAskDrag);
+  askResizer.addEventListener('pointercancel', endAskDrag);
+
   // 选中原文 → 浮动「问 AI」
   const selTool = $('#sel-tool');
   document.addEventListener('mouseup', (ev) => {
@@ -1722,6 +1890,8 @@ function bindEvents() {
   $('#btn-diagram-relayout').onclick = () => diagram.relayout();
   $('#btn-diagram-fit').onclick = () => diagram.fit();
   $('#btn-diagram-export').onclick = exportDiagram;
+  $('#btn-diagram-collapse').onclick = () => setDiagramCollapsed(true);
+  $('#btn-diagram-toggle').onclick = toggleDiagram;
   $('#btn-diagram-zoom').onclick = (ev) => {
     const pane = $('.pane[data-pane="diagram"]');
     const zoomed = pane.classList.toggle('zoom');
@@ -1908,6 +2078,9 @@ async function main() {
   }
   updateGraphButton();
   refreshLibrary();
+  setDiagramCollapsed(localStorage.getItem(LS_DIAGRAM) === '1', { persist: false });
+  applyPaperWidth(localStorage.getItem(LS_PAPER_WIDTH) ?? DEFAULT_PAPER_PCT, { persist: false });
+  initPaneResizer();
   switchPaneIfNarrow('paper');
   if (restored) restoreCachedPdf();
   const quote = new URLSearchParams(location.search).get('quote');

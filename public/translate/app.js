@@ -5,6 +5,7 @@ import {
   listProjects, delProject, touchProject,
   prefs, prefsReady, setPref, getStoreStats, migrateBrowserData, setStoreWarnHandler,
 } from './store.mjs';
+import { registerTopbarActions } from '../topbar.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
 
@@ -264,7 +265,8 @@ function loadCfgStore() {
 /** 设置按钮上显示当前引擎，便于确认"到底在用哪家" */
 function refreshEngineHint() {
   const meta = catByKey.get(state.cfg.provider);
-  $('#btnSettings').title = `翻译设置 · 当前：${meta ? meta.label : state.cfg.provider}`;
+  const btn = document.querySelector('#view-translate [data-topbar-settings]');
+  if (btn) btn.title = `翻译设置 · 当前：${meta ? meta.label : state.cfg.provider}`;
 }
 function cfgUsable() {
   const meta = catByKey.get(state.cfg.provider);
@@ -4132,12 +4134,15 @@ function bind() {
     e.currentTarget.title = hidden ? '显示中文' : '隐藏中文';
   };
 
-  // 主题
-  $('#btnTheme').onclick = () => {
-    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = next;
-    setPref('theme', next);
-  };
+  // 主题与设置入口由共用顶栏触发，这里注册翻译页自己的行为
+  registerTopbarActions('translate', {
+    settings: openSettings,
+    theme: () => {
+      const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = next;
+      setPref('theme', next);
+    },
+  });
 
   // AI 分段：切换后立刻按新方式重切当前文档
   el.aiSegment.checked = state.aiSegment;
@@ -4217,7 +4222,6 @@ function bind() {
   $('#corrBadge').onclick = () => exportCorrections();
 
   // 设置弹窗
-  $('#btnSettings').onclick = openSettings;
   $('#btnCloseCfg').onclick = closeSettings;
   $('#btnCancelCfg').onclick = closeSettings;
   $('#settingsModal').addEventListener('click', (e) => {

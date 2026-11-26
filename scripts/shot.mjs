@@ -10,7 +10,8 @@ import path from 'node:path';
 const [, , url, out, viewName = '', waitMs = '2500'] = process.argv;
 const PORT = 9334;
 const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'pl-shot-'));
+const profile = process.env.SHOT_PROFILE || fs.mkdtempSync(path.join(os.tmpdir(), 'pl-shot-'));
+if (process.env.SHOT_PROFILE) fs.mkdirSync(profile, { recursive: true });
 
 const child = spawn(
   CHROME,
@@ -100,8 +101,10 @@ console.log(`saved ${out}`);
 ws.close();
 child.kill();
 await sleep(500);
-try {
-  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
-} catch {
-  /* Chrome 占着文件就让它留在临时目录 */
+if (!process.env.SHOT_PROFILE) {
+  try {
+    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+  } catch {
+    /* Chrome 占着文件就让它留在临时目录 */
+  }
 }

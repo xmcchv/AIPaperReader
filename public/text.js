@@ -14,6 +14,18 @@ export function inlineMd(text) {
     .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
 }
 
+/**
+ * 把回答里的来源标记转成角标 HTML。输入是已渲染的 HTML 字符串。
+ * 模型可能输出英文 [] 或中文【】，两种都认；网络来源加 .web 类。
+ */
+export function markAskCitations(html) {
+  return String(html || '').replace(
+    /(?:\[|【)(§[^\]【】\[]{1,24}|原文段落[^\]【】\[]{0,12}|选中片段|网络)(?:\]|】)/g,
+    (whole, label) =>
+      `<span class="ask-cite${label === '网络' ? ' web' : ''}" title="来源：${escapeHtml(label)}">${escapeHtml(label)}</span>`,
+  );
+}
+
 // 章节标题识别。中文标题后面没有 \b 边界（\w 不含中文），所以关键字分支用显式后向断言；
 // 数字编号分支要求「编号 1-2 位 + 大写字母或中文」，避免把「1 512 512」表格行、
 // 「2015 classification」年份开头的正文、脚注行当成标题
@@ -151,11 +163,35 @@ export function renderBlocks(lines) {
     para = [];
   };
 
+  let inFence = false;
+  let fence = [];
   for (const rawLine of lines) {
     const line = rawLine.trimEnd();
+    if (/^\s*```/.test(line)) {
+      flushPara();
+      flushList();
+      if (inFence) {
+        out.push(`<pre><code>${escapeHtml(fence.join('\n'))}</code></pre>`);
+        fence = [];
+      }
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) {
+      fence.push(rawLine);
+      continue;
+    }
     if (!line.trim()) {
       flushPara();
       flushList();
+      continue;
+    }
+    const heading = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading) {
+      flushPara();
+      flushList();
+      const level = Math.min(heading[1].length + 1, 6); // # → h2，给正文标题留 h1
+      out.push(`<h${level}>${inlineMd(heading[2])}</h${level}>`);
       continue;
     }
     if (/^\s*(?:[-*•]|\d+[.)])\s+/.test(line)) {
@@ -172,6 +208,7 @@ export function renderBlocks(lines) {
     flushList();
     para.push(line.trim());
   }
+  if (inFence && fence.length) out.push(`<pre><code>${escapeHtml(fence.join('\n'))}</code></pre>`);
   flushList();
   flushPara();
   return out.join('');

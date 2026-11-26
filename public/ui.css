@@ -50,29 +50,11 @@ body {
 
 /* ------------------------------- 顶栏 ---------------------------------- */
 
-.topbar {
+.app-topbar {
   background: color-mix(in srgb, var(--panel) 86%, transparent);
   backdrop-filter: saturate(1.6) blur(12px);
   -webkit-backdrop-filter: saturate(1.6) blur(12px);
   border-bottom: 1px solid var(--line);
-}
-
-.brand-mark {
-  text-shadow: none;
-  font-size: 18px;
-  color: var(--accent);
-}
-
-.brand-text strong {
-  font-size: 14.5px;
-  font-weight: 600;
-  letter-spacing: 0.1px;
-}
-
-.brand-text small {
-  font-size: 10.5px;
-  letter-spacing: 0.3px;
-  color: var(--muted);
 }
 
 /* 视图切换：从「三颗药丸」改成真正的分段控件 */
@@ -417,13 +399,6 @@ input:focus {
 }
 
 /* ----------------------------- 翻译页 ---------------------------------- */
-
-#view-translate .topbar {
-  background: color-mix(in srgb, var(--panel) 86%, transparent);
-  backdrop-filter: saturate(1.6) blur(12px);
-  -webkit-backdrop-filter: saturate(1.6) blur(12px);
-  border-bottom: 1px solid var(--line);
-}
 
 #view-translate .btn {
   height: 32px;
@@ -858,8 +833,7 @@ input:focus {
 }
 
 /* 顶栏右侧操作：主按钮与次按钮之间留出呼吸 */
-#view-translate .topbar .btn + .btn,
-.topbar .btn + .btn {
+.app-topbar .btn + .btn {
   margin-left: 2px;
 }
 
@@ -1037,4 +1011,114 @@ html[data-theme='dark'] #view-translate .cards-empty::before {
 
 html[data-theme='dark'] .kg-view .node rect {
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+}
+
+/* 追问区：联网开关与来源角标 */
+.ask-head {
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.ask-head > span:first-child {
+  margin-right: auto;
+}
+
+.ask-web-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+
+.ask-web-toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.ask-web-toggle.active {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: var(--accent-soft);
+}
+
+.ask-web-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.45;
+}
+
+.ask-web-toggle.active .ask-web-dot {
+  opacity: 1;
+}
+
+.ask-cite {
+  display: inline-block;
+  margin: 0 1px;
+  padding: 0 4px;
+  font-size: 10.5px;
+  line-height: 16px;
+  color: var(--text-dim);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+.ask-cite.web {
+  color: #2d7d46;
+  border-color: color-mix(in srgb, #2d7d46 35%, transparent);
+  background: color-mix(in srgb, #2d7d46 8%, transparent);
+}
+
+html[data-theme='dark'] .ask-cite.web {
+  color: #7ecfa0;
+  border-color: color-mix(in srgb, #7ecfa0 35%, transparent);
+  background: color-mix(in srgb, #7ecfa0 10%, transparent);
+}
+
+/* 追问回答里的 markdown 标题与代码块 */
+.ask-item.a h3,
+.ask-item.a h4 {
+  margin: 12px 0 5px;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.ask-item.a h3:first-child,
+.ask-item.a h4:first-child {
+  margin-top: 0;
+}
+
+.ask-item.a pre {
+  margin: 8px 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  line-height: 1.55;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--ui-radius-sm);
+}
+
+.ask-item.a pre code {
+  padding: 0;
+  background: transparent;
+  border: 0;
 }

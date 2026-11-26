@@ -20,8 +20,153 @@ body {
   align-items: stretch;
 }
 
-body[data-view='translate'] {
-  --shell-top: 56px;
+/* ------------------------------ 三视图共用顶栏 ------------------------------ */
+
+.app-topbar {
+  flex: 0 0 var(--topbar-h, 58px);
+  height: var(--topbar-h, 58px);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  position: relative;
+  z-index: 20;
+}
+
+.app-topbar-center {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.app-topbar-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-topbar-utils {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.app-topbar-brand {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--accent);
+}
+
+.app-topbar-mark {
+  font-size: 18px;
+  line-height: 1;
+  color: var(--accent);
+  text-shadow: none;
+}
+
+.app-topbar-brand-kg .app-topbar-mark {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 32% 32%, #9ed0ff, var(--accent) 58%, transparent 72%);
+  box-shadow: 0 0 14px rgba(77, 163, 255, 0.55);
+}
+
+.app-topbar-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+.app-topbar-title strong {
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: 0.1px;
+  color: var(--ink);
+}
+
+.app-topbar-title small {
+  font-size: 10.5px;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.app-topbar-placeholder {
+  flex: none;
+  width: 30px;
+  height: 30px;
+}
+
+/* 视图切换：从原样式表迁入，三视图共用一份 */
+.app-switch {
+  flex: none;
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 999px;
+}
+
+.app-switch button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: 0.62;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.app-switch button:hover {
+  opacity: 1;
+}
+
+.app-switch button.active {
+  background: var(--accent, #4da3ff);
+  color: #fff;
+  opacity: 1;
+}
+
+@media (max-width: 1080px) {
+  #view-paper .app-topbar-title small {
+    display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  #view-translate .app-topbar-title small {
+    display: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .app-topbar {
+    gap: 8px;
+    padding: 0 10px;
+  }
+
+  .app-topbar-title strong {
+    font-size: 13.5px;
+  }
+
+  .app-topbar-actions .btn.ghost {
+    padding: 5px 8px;
+    font-size: 12px;
+  }
 }
 
 @media (max-width: 1180px) {
@@ -108,17 +253,6 @@ body[data-view='kg'] #view-kg {
 body.sidebar-collapsed #btnSidebar,
 body.sidebar-collapsed #btn-sidebar-toggle {
   color: var(--muted);
-}
-
-/* 图谱页不显示侧栏，但保留同宽占位，切换视图时按钮不跳位 */
-.sidebar-toggle-placeholder {
-  flex: none;
-  width: 30px;
-  height: 30px;
-}
-
-.sidebar-toggle-placeholder[hidden] {
-  display: none !important;
 }
 
 /* 翻译设置里的错误提示（Key 保存失败、缺主密码等） */

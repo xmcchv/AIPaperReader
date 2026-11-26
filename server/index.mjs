@@ -16,6 +16,7 @@ import { handlePaperApi } from './paper/routes.mjs';
 import { handleStoreApi } from './paper/store-adapter.mjs';
 import { handleTranslateApi } from './translate/routes.mjs';
 import { readingMessages, structureMessages, askMessages, summaryMessages } from './prompts.mjs';
+import { buildAskContext } from './context.mjs';
 import { fetchArxivPaper } from './paper.mjs';
 import { SAMPLE_PAPER, DEMO_READING, DEMO_STRUCTURE, DEMO_ASK } from './samples.mjs';
 
@@ -347,9 +348,27 @@ function localSummary(reading, askThread) {
   return { digest, qa_highlights: qa.slice(-8) };
 }
 
+/**
+ * 联网工具能力矩阵：只用服务商托管工具（客户端不解析 tool_calls、不做二次请求）。
+ * 返回 null 表示当前模型不支持联网，由调用方发 notice 并退回纯论文模式。
+ */
+function webToolsFor(cfg, enabled) {
+  if (!enabled) return null;
+  const provider = String(cfg.provider || '').toLowerCase();
+  const model = String(cfg.model || '').toLowerCase();
+  if (provider === 'deepseek' && /^(deepseek-flash|deepseek-v4-flash|deepseek-v4-pro)$/.test(model)) {
+    return [{ type: 'deepseek_web_search' }];
+  }
+  if (provider === 'openai' && model === 'gpt-5-search-api') {
+    return [{ type: 'web_search' }];
+  }
+  return null;
+}
+
+const WEB_UNSUPPORTED_NOTICE = '当前模型不支持联网，已用论文内容回答';
+
 async function handleAsk(req, res) {
   const body = await readBody(req);
-  const paper = paperOf(body);
   const question = String(body.question || '').trim();
   if (!question) throw new HttpError(400, '问题不能为空');
 
@@ -364,15 +383,25 @@ async function handleAsk(req, res) {
   req.on('close', () => controller.abort());
 
   try {
-    const messages = askMessages(paper.text, {
+    const paper = paperOf(body);
+    const wantWeb = body.webSearch !== false;
+    const tools = webToolsFor(cfg, wantWeb);
+    if (wantWeb && !tools) sse.event('notice', { code: 'web_unsupported', message: WEB_UNSUPPORTED_NOTICE });
+
+    const context = buildAskContext({
       title: paper.title,
+      paperText: paper.text,
       selection: String(body.selection || ''),
       reading: String(body.reading || ''),
+      structure: body.structure && typeof body.structure === 'object' ? body.structure : null,
       question,
+      askThread: Array.isArray(body.askThread) ? body.askThread : [],
     });
+    const messages = askMessages(context.block, { question, webSearch: Boolean(tools) });
+
     let thinkingChars = 0;
     let lastPush = 0;
-    for await (const chunk of streamChat(cfg, messages, { signal: controller.signal })) {
+    for await (const chunk of streamChat(cfg, messages, { signal: controller.signal, tools })) {
       if (chunk.channel === 'reasoning') {
         thinkingChars += chunk.text.length;
         const now = Date.now();

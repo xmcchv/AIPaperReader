@@ -1,6 +1,6 @@
 {
   "name": "paperlens",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "type": "module",
   "description": "PaperLens - 论文精读 + 知识图谱：单页切换原文/精读/图解与概念图谱，本地论文库，可配置任意 OpenAI 兼容模型 API",
@@ -15,6 +15,7 @@
     "encrypt:translate-keys": "node scripts/encrypt-translate-keys.mjs",
     "smoke": "node scripts/smoke.mjs",
     "test:translate-config": "node scripts/test-translate-config.mjs",
+    "test:ask-context": "node scripts/test-ask-context.mjs",
     "desktop": "electron .",
     "desktop:build": "node scripts/desktop-build.mjs --dir",
     "desktop:dist": "node scripts/desktop-build.mjs"
@@ -42,14 +43,21 @@
     ],
     "win": {
       "signAndEditExecutable": false,
-      "target": ["nsis", "portable"]
+      "target": [
+        "nsis",
+        "portable"
+      ]
     },
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "category": "public.app-category.productivity"
     },
     "linux": {
-      "target": ["AppImage"],
+      "target": [
+        "AppImage"
+      ],
       "category": "Office"
     }
   }

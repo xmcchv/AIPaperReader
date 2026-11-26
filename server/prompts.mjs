@@ -116,22 +116,21 @@ ${String(reading || '').slice(0, 6000)}
   ];
 }
 
-export function askMessages(paper, { title = '', selection = '', reading = '', question }) {
-  const context = [
-    title ? `论文标题：${title}` : '',
-    selection ? `用户选中的原文片段：\n"""${selection.slice(0, 4000)}"""` : '',
-    reading ? `已有的精读笔记（节选）：\n"""${reading.slice(0, 3000)}"""` : '',
-    `论文正文（节选）：\n"""${trimPaper(paper, 12000)}"""`,
-  ]
-    .filter(Boolean)
-    .join('\n\n');
+/**
+ * 追问消息。上下文由 context.mjs 的 buildAskContext() 组装后传入，
+ * 这里只负责按联网开关切换 system 约束——两类来源不能混为一谈。
+ */
+export function askMessages(contextBlock, { question, webSearch = false } = {}) {
+  const tail = webSearch
+    ? '允许联网补充论文之外的信息：引用论文事实时在句末标注来源标记（如 [§核心方法]），引用网络信息时标注 [网络]。标记一律用英文方括号 []，不要用中文【】。两类来源不要混为一谈；论文没写且网络也没查到的，直接说"不清楚"。'
+    : '只依据下面带来源标记的材料作答：引用论文事实时在句末标注（如 [§核心方法]、[原文段落]）。标记一律用英文方括号 []，不要用中文【】。不要编造；材料不足时说"论文未明确说明"。';
 
   return [
     {
       role: 'system',
-      content: `${SYSTEM}\n现在进入追问模式：回答要短、准、贴着原文，能用例子就用例子，控制在 300 字内。`,
+      content: `${SYSTEM}\n现在进入追问模式：回答要短、准，能用例子就用例子，控制在 300 字内。${tail}`,
     },
-    { role: 'user', content: `${context}\n\n用户问题：${question}` },
+    { role: 'user', content: String(contextBlock || `用户问题：${question || ''}`) },
   ];
 }
 

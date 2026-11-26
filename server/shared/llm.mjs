@@ -66,7 +66,7 @@ async function toLlmError(res) {
 }
 
 /** 组装请求体：extra_body 先合并，核心字段后置以免被覆盖；max_tokens 为空则不发送 */
-function buildBody(cfg, { messages, stream, maxTokens, temperature }) {
+function buildBody(cfg, { messages, stream, maxTokens, temperature, tools } = {}) {
   const extra = cfg.extra_body && typeof cfg.extra_body === 'object' && !Array.isArray(cfg.extra_body) ? cfg.extra_body : {};
   const body = { ...extra, model: cfg.model, messages, stream };
 
@@ -76,6 +76,9 @@ function buildBody(cfg, { messages, stream, maxTokens, temperature }) {
   const tp = temperature ?? cfg.temperature;
   if (tp !== null && tp !== undefined && Number.isFinite(Number(tp))) body.temperature = Number(tp);
 
+  // 服务商托管工具（如 deepseek_web_search）：只有显式传入才发送，缺省时请求体与原来完全一致
+  if (Array.isArray(tools) && tools.length) body.tools = tools;
+
   return JSON.stringify(body);
 }
 
@@ -84,12 +87,12 @@ function buildBody(cfg, { messages, stream, maxTokens, temperature }) {
  * 每帧形如 { channel: 'content' | 'reasoning' | 'end', text?, finishReason? }
  * —— reasoning 是部分模型（DeepSeek 等）的思维链增量，不能混进正文。
  */
-export async function* streamChat(cfg, messages, { maxTokens, temperature, signal } = {}) {
+export async function* streamChat(cfg, messages, { maxTokens, temperature, signal, tools } = {}) {
   const res = await safeFetch(chatCompletionsUrl(cfg.base_url), {
     method: 'POST',
     headers: headers(cfg),
     signal,
-    body: buildBody(cfg, { messages, stream: true, maxTokens, temperature }),
+    body: buildBody(cfg, { messages, stream: true, maxTokens, temperature, tools }),
   });
   if (!res.ok || !res.body) throw await toLlmError(res);
 

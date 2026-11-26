@@ -95,51 +95,6 @@ code {
   border-radius: 5px;
 }
 
-/* ---------------------------------- 顶栏 ---------------------------------- */
-
-.topbar {
-  height: var(--topbar-h);
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 0 16px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
-  position: relative;
-  z-index: 20;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  flex-shrink: 0;
-}
-
-.brand-mark {
-  font-size: 20px;
-  color: var(--accent);
-  line-height: 1;
-  text-shadow: 0 0 16px var(--accent-soft);
-}
-
-.brand-text {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.15;
-}
-
-.brand-text strong {
-  font-size: 15px;
-  letter-spacing: 0.2px;
-}
-
-.brand-text small {
-  font-size: 10.5px;
-  color: var(--muted);
-  letter-spacing: 0.4px;
-}
-
 /* 论文标题：外观与翻译页的 .file-chip 一致（胶囊 + 小圆点 + 单行省略） */
 .title-chip {
   display: flex;
@@ -221,14 +176,6 @@ code {
   border-color: var(--accent);
   background: var(--bg-soft);
   color: var(--text);
-}
-
-.topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  margin-left: auto;
 }
 
 .badge {
@@ -355,10 +302,52 @@ button.badge.clickable:hover {
 }
 
 .workspace {
+  --paper-w: 34%;
   height: calc(100vh - var(--topbar-h));
   display: grid;
-  grid-template-columns: minmax(280px, 1.02fr) minmax(300px, 1fr) minmax(300px, 1.08fr);
+  grid-template-columns: var(--paper-w) minmax(300px, 1fr) minmax(300px, 1.08fr);
   min-height: 0;
+  position: relative;
+}
+
+/* 原文 ↔ 精读之间的可拖动分隔栏 */
+.pane-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--paper-w, 34%) - 5px);
+  width: 10px;
+  z-index: 12;
+  cursor: col-resize;
+  touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pane-resizer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 2px;
+  background: transparent;
+  transition: background 0.16s var(--ease);
+}
+
+.pane-resizer:hover::before,
+.pane-resizer.dragging::before {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+body.pane-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.pane-resizing .pane {
+  pointer-events: none;
 }
 
 .pane {
@@ -377,6 +366,36 @@ button.badge.clickable:hover {
 
 .pane[data-pane='paper'] {
   background: var(--paper-bg);
+}
+
+/* 图解栏收起：三栏 → 原文 + 精读两栏 */
+.workspace.diagram-collapsed {
+  grid-template-columns: var(--paper-w, 34%) minmax(320px, 1fr);
+}
+
+.workspace.diagram-collapsed .pane[data-pane='diagram'] {
+  display: none;
+}
+
+/* 图解栏开关与历史论文按钮同款；收起态降低亮度作为视觉反馈 */
+#btn-diagram-toggle {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+}
+
+#btn-diagram-toggle:hover {
+  color: var(--accent);
+}
+
+body.diagram-collapsed #btn-diagram-toggle {
+  color: var(--muted);
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 
 .pane-head {
@@ -604,7 +623,83 @@ button.badge.clickable:hover {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  max-height: 40%;
+  /* 默认跟随内容高度；拖拽时由 JS 写入具体高度，这里只兜住上下限 */
+  max-height: 70%;
+  position: relative;
+}
+
+/* 可拖动标示：3 个小圆点，静止弱化、hover/拖动变强调色 */
+.resizer-grip {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--muted);
+  opacity: 0.55;
+  transition: opacity 0.16s var(--ease), background 0.16s var(--ease), box-shadow 0.16s var(--ease);
+}
+
+.pane-resizer .resizer-grip {
+  box-shadow: 0 6px 0 var(--muted), 0 -6px 0 var(--muted);
+  margin-top: -3px;
+}
+
+.pane-resizer:hover .resizer-grip,
+.pane-resizer.dragging .resizer-grip {
+  background: var(--accent);
+  box-shadow: 0 6px 0 var(--accent), 0 -6px 0 var(--accent);
+  opacity: 1;
+}
+
+/* 追问区与正文之间的分割线手柄 */
+.ask-resizer {
+  flex: 0 0 auto;
+  height: 9px;
+  margin-top: -1px;
+  cursor: row-resize;
+  touch-action: none;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ask-resizer .resizer-grip {
+  box-shadow: 6px 0 0 var(--muted), -6px 0 0 var(--muted);
+  margin-left: -3px;
+  position: relative;
+  z-index: 1;
+}
+
+.ask-resizer:hover .resizer-grip,
+.ask-resizer.dragging .resizer-grip {
+  background: var(--accent);
+  box-shadow: 6px 0 0 var(--accent), -6px 0 0 var(--accent);
+  opacity: 1;
+}
+
+.ask-resizer::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: transparent;
+  transition: background 0.16s var(--ease);
+}
+
+.ask-resizer:hover::before,
+.ask-resizer.dragging::before {
+  background: var(--accent);
+  height: 2px;
+}
+
+.ask-dock.resizing {
+  user-select: none;
+}
+
+.ask-dock.resizing .ask-thread {
+  pointer-events: none;
 }
 
 .ask-head {
@@ -637,7 +732,6 @@ button.badge.clickable:hover {
   padding: 8px 10px;
   font-size: 13px;
   color: var(--text-dim);
-  white-space: pre-wrap;
   word-break: break-word;
 }
 
@@ -646,11 +740,39 @@ button.badge.clickable:hover {
   color: var(--text);
   align-self: flex-end;
   max-width: 92%;
+  white-space: pre-wrap;
 }
 
 .ask-item.a {
   background: var(--panel-2);
   border: 1px solid var(--line-soft);
+}
+
+/* 回答走 Markdown 渲染，块级元素需要一点间距才不难看 */
+.ask-item.a p {
+  margin: 0 0 6px;
+}
+
+.ask-item.a p:last-child {
+  margin-bottom: 0;
+}
+
+.ask-item.a ul,
+.ask-item.a ol {
+  margin: 0 0 6px;
+  padding-left: 20px;
+}
+
+.ask-item.a li + li {
+  margin-top: 2px;
+}
+
+.ask-item.a code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  background: var(--bg-soft);
+  border-radius: 4px;
+  padding: 1px 4px;
 }
 
 .ask-item .quote {
@@ -1505,13 +1627,15 @@ button.badge.clickable:hover {
 /* ---------------------------------- 响应式 -------------------------------- */
 
 @media (max-width: 1080px) {
-  .brand-text small {
-    display: none;
-  }
-
-  .workspace {
+  .workspace,
+  .workspace.diagram-collapsed {
     grid-template-columns: 1fr;
     height: calc(100vh - var(--topbar-h) - 44px);
+  }
+
+  /* 窄屏是单栏 tabs，栏间拖动没有意义 */
+  .pane-resizer {
+    display: none;
   }
 
   .mobile-tabs {
@@ -1554,20 +1678,6 @@ button.badge.clickable:hover {
 }
 
 @media (max-width: 620px) {
-  .topbar {
-    gap: 8px;
-    padding: 0 10px;
-  }
-
-  .brand-text strong {
-    font-size: 13.5px;
-  }
-
-  .topbar-actions .btn.ghost {
-    padding: 5px 8px;
-    font-size: 12px;
-  }
-
   #btn-run {
     font-size: 12px;
     padding: 6px 10px;
@@ -1598,37 +1708,6 @@ button.badge.clickable:hover {
 
 html[data-view='kg'] #view-paper {
   display: none;
-}
-
-.app-switch {
-  flex: none;
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
-  border-radius: 999px;
-}
-
-.app-switch button {
-  border: 0;
-  background: transparent;
-  color: inherit;
-  opacity: 0.62;
-  font: inherit;
-  font-size: 12.5px;
-  padding: 4px 11px;
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.app-switch button:hover {
-  opacity: 1;
-}
-
-.app-switch button.active {
-  background: var(--accent, #4da3ff);
-  color: #fff;
-  opacity: 1;
 }
 
 .library-list {
