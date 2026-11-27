@@ -117,11 +117,34 @@ export function renderMathPart(katex, tex, displayMode) {
 
   const direct = renderOne(tex);
   if (direct) return direct;
+  // 精读文本里常见双反斜杠（模型输出/JSON 二次转义），如 "\\sum" 应为 "\sum"。
+  // KaTeX 会把 \\ 解释为换行命令，导致整块公式渲染失败、原文残留。
+  const unescaped = tex.replace(/\\\\/g, '\\');
+  if (unescaped !== tex) {
+    const fixed = renderOne(unescaped);
+    if (fixed) return fixed;
+  }
   const repaired = repairLatex(tex);
   if (repaired !== tex) {
     const fixed = renderOne(repaired);
     if (fixed) return fixed;
   }
+  // 严格模式失败时降级：KaTeX 用 throwOnError:false 仍能渲染出可读的公式结构，
+  // 比把整段 LaTeX 原样丢给用户强（模型常写出语义怪但可容忍的写法）
+  const lenient = (value) => {
+    try {
+      return katex.renderToString(value, {
+        displayMode,
+        throwOnError: false,
+        strict: 'ignore',
+        output: 'html',
+      });
+    } catch {
+      return null;
+    }
+  };
+  const loose = lenient(tex) || (repaired !== tex && lenient(repaired));
+  if (loose) return loose;
 
   if (!displayMode) return null;
   const chunks = splitTopLevel(tex);
@@ -193,6 +216,16 @@ export async function renderMathIn(root) {
 
   const katex = await loadKatex();
   if (!katex) return; // 离线：保留 LaTeX 原文
+
+  // 首次加载 KaTeX 期间，流式渲染可能已把文本节点换掉；若全部失效，
+  // 对当前 DOM 重新扫描一次，否则这批公式会永远停在 LaTeX 原文。
+  if (work.every((w) => !w.node.isConnected)) {
+    if ((root.__mathRetries || 0) < 3) {
+      root.__mathRetries = (root.__mathRetries || 0) + 1;
+      await renderMathIn(root);
+    }
+    return;
+  }
 
   for (const { node, parts } of work) {
     if (!node.isConnected) continue; // 等待加载期间被下一次流式渲染替换了

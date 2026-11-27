@@ -67,7 +67,7 @@ ${trimPaper(paper)}
   ];
 }
 
-export function structureMessages(paper, reading = '', { title = '' } = {}) {
+export function structureMessages(paper, reading = '', { title = '', sections = [] } = {}) {
   const user = `下面是一篇论文的正文与已有的精读笔记。请输出**严格 JSON**（第一个字符就是 {，不要 markdown 代码块，不要注释）：
 
 {
@@ -83,7 +83,7 @@ export function structureMessages(paper, reading = '', { title = '' } = {}) {
   "diagram": {
     "title": "方法总览",
     "nodes": [
-      { "id": "n1", "label": "节点名（不超过 12 字）", "detail": "这个环节的一句话说明", "kind": "input" }
+      { "id": "n1", "label": "节点名（不超过 12 字）", "detail": "这个环节的一句话说明", "kind": "input", "sectionRef": "2" }
     ],
     "edges": [
       { "from": "n1", "to": "n2", "label": "箭头上的短说明" }
@@ -97,6 +97,7 @@ export function structureMessages(paper, reading = '', { title = '' } = {}) {
 - diagram.kind 只能取 input / process / data / output 之一。
 - diagram.nodes 给 4-9 个，必须覆盖"输入 → 关键处理环节 → 输出/结果"的完整链路，节点之间用 edges 连成有向图，不要出现孤立节点。
 - diagram.nodes[].id 用 n1..n9；edges 里只允许引用已存在的 id。
+- diagram.nodes[].sectionRef：填这个环节对应论文正文的章节编号（见下方章节列表），没有把握就留空字符串。
 - 所有文案用中文（专有名词保留英文）。
 
 论文标题：${title || '（未提供）'}
@@ -109,10 +110,39 @@ ${trimPaper(paper, 20000)}
 已有精读笔记：
 """
 ${String(reading || '').slice(0, 6000)}
-"""`;
+"""
+
+论文章节列表（sectionRef 填这里的编号）：
+${sections.length ? sections.map((s) => `${s.number || '-'} ${s.title}${s.summary ? `：${s.summary}` : ''}`).join('\n') : '（未解析出章节，sectionRef 留空）'}`;
   return [
     { role: 'system', content: '你是一个严谨的论文结构化抽取器，只输出合法 JSON，绝不输出 JSON 之外的任何字符。' },
     { role: 'user', content: user },
+  ];
+}
+
+/**
+ * 章节整理：只对规则层给出的标题候选做判断，不接触正文与段落索引。
+ * 返回数组里的 id 必须原样带回，服务端据此映射回已算好的段落区间。
+ */
+export function outlineMessages(headings) {
+  return [
+    {
+      role: 'system',
+      content: '你是论文目录整理器，只输出严格 JSON 数组，不要代码块、不要注释、不要多余文字。',
+    },
+    {
+      role: 'user',
+      content: `下面是论文里规则识别出的章节标题候选。请为每个候选判断：
+- level：层级（1=一级节，2=子节，3=更细）；编号如 3.2 表示 level 2。
+- title：规范化后的中文或英文标题（去掉编号，不超过 30 字）。
+- summary：这一节大意的一句话（不超过 40 字）；看不出就留空字符串。
+- id：**必须原样返回给定的 id**，不要改、不要排序、不要增删条目。
+
+严格输出 JSON 数组，格式：[{"id":"h0","level":1,"title":"引言","summary":"说明研究背景与问题"}]
+
+候选列表：
+${JSON.stringify(headings)}`,
+    },
   ];
 }
 

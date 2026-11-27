@@ -57,6 +57,10 @@ const PAPER_COLUMNS = [
   ['tr_json', "TEXT NOT NULL DEFAULT ''"],
   ['tr_engine', "TEXT NOT NULL DEFAULT ''"],
   ['tr_count', 'INTEGER NOT NULL DEFAULT 0'],
+  ['usage_json', "TEXT NOT NULL DEFAULT '{}'"],
+  // 本篇累计用量：跨多次精读/追问累加，重跑精读不清零；与 usage_json（本次）分开
+  ['paper_usage_json', "TEXT NOT NULL DEFAULT ''"],
+  ['outline_json', "TEXT NOT NULL DEFAULT ''"],
 ];
 
 const EXTRA_TABLES = `

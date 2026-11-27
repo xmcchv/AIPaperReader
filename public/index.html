@@ -20,22 +20,36 @@
     <aside id="sidebar" aria-label="历史论文">
       <div class="sidebar-inner">
         <div class="side-head">
-          <span class="side-title">历史论文</span>
-          <span class="side-count" id="historyCount">0</span>
+          <div class="side-tabs" role="tablist" aria-label="侧栏面板">
+            <button class="side-tab active" type="button" data-side-tab="history" role="tab" aria-selected="true">历史<span class="side-count" id="historyCount">0</span></button>
+            <button class="side-tab" type="button" data-side-tab="outline" role="tab" aria-selected="false">目录</button>
+          </div>
           <button class="btn icon" id="btnSideCollapse" title="收起侧栏（Ctrl+B）" aria-label="收起侧栏">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
               <path d="M15 18l-6-6 6-6"/>
             </svg>
           </button>
         </div>
-        <div class="side-search">
-          <input id="historyFilter" type="search" placeholder="搜索标题…" spellcheck="false" aria-label="搜索历史论文" />
+
+        <div class="side-panel" data-side-panel="history">
+          <div class="side-search">
+            <input id="historyFilter" type="search" placeholder="搜索标题…" spellcheck="false" aria-label="搜索历史论文" />
+          </div>
+          <div class="history" id="historyList" role="list"></div>
+          <div class="side-foot">
+            <button class="btn tiny" id="btnSideOpen">打开 PDF</button>
+            <span class="spacer"></span>
+            <button class="btn tiny" id="btnSideRefresh" title="重新读取历史列表">刷新</button>
+          </div>
         </div>
-        <div class="history" id="historyList" role="list"></div>
-        <div class="side-foot">
-          <button class="btn tiny" id="btnSideOpen">打开 PDF</button>
-          <span class="spacer"></span>
-          <button class="btn tiny" id="btnSideRefresh" title="重新读取历史列表">刷新</button>
+
+        <div class="side-panel" data-side-panel="outline" hidden>
+          <div class="side-outline" id="side-outline" role="tree"></div>
+          <div class="side-foot">
+            <button class="btn tiny" id="btn-outline-resolve" title="重新解析章节">重新解析</button>
+            <span class="spacer"></span>
+            <span class="side-outline-count" id="side-outline-count">0 节</span>
+          </div>
         </div>
       </div>
     </aside>
@@ -288,9 +302,6 @@
               <button class="seg active" type="button" data-view="pdf" title="原版页面 + 段落标注">PDF</button>
               <button class="seg" type="button" data-view="text" title="解析出来的纯文本段落">文本</button>
             </div>
-            <button id="btn-upload-pdf" class="btn tiny" type="button" title="上传本地 PDF（在原版页面上标注段落）">＋PDF</button>
-            <button class="btn tiny" type="button" data-open="arxiv" title="按 arXiv 编号载入">arXiv</button>
-            <button class="btn tiny" type="button" data-open="paste" title="粘贴论文正文">粘贴</button>
             <button id="btn-clear" class="btn tiny" type="button" title="清空当前论文">清空</button>
           </div>
         </div>
@@ -320,7 +331,7 @@
       <section class="pane" data-pane="reading">
         <div class="pane-head">
           <h2>AI 精读</h2>
-          <span id="reading-status" class="pane-meta"></span>
+          <span id="total-usage" class="total-usage" hidden title="本篇论文累计用量（精读 + 结构化 + 所有追问），估算，以服务商账单为准"></span>
           <div class="pane-tools">
             <button id="btn-copy-reading" class="btn tiny" type="button">复制</button>
             <button id="btn-to-graph" class="btn tiny" type="button" title="把论文、精读与概念推送到知识图谱">→ 知识图谱</button>
@@ -332,6 +343,10 @@
           <div class="empty-state">
             <p class="empty-title">还没有精读结果</p>
             <p class="empty-sub">点右上角「开始精读」，AI 会按固定小节拆解这篇论文。</p>
+          </div>
+          <!-- 本次用量随精读要点滚动，放在列表末尾；本篇累计留在顶栏 -->
+          <div class="reading-usage-bar">
+            <span id="reading-status" class="pane-meta"></span>
           </div>
         </div>
 
@@ -546,6 +561,20 @@
           <button type="button" class="btn ghost" id="btn-export-close">取消</button>
           <button type="button" class="btn ghost" id="btn-export-html">下载 HTML</button>
           <button type="button" class="btn primary" id="btn-export-print">打印 / 保存为 PDF</button>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- 推送到知识图谱：选择目标图谱（可多选） -->
+    <dialog id="dlg-push-graph" class="dialog">
+      <div class="dialog-body">
+        <h3>推送到知识图谱</h3>
+        <p class="hint">选择要写入的知识图谱，可多选。论文正文、精读与概念会分别入库到每个选中的图谱。</p>
+        <div class="push-graph-list" id="push-graph-list"></div>
+        <p class="dialog-error" id="push-graph-error" hidden></p>
+        <div class="dialog-actions">
+          <button type="button" class="btn ghost" id="btn-push-graph-close">取消</button>
+          <button type="button" class="btn primary" id="btn-push-graph-confirm">推送</button>
         </div>
       </div>
     </dialog>

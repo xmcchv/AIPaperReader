@@ -53,6 +53,9 @@ function toPaper(row) {
     reading_model: row.reading_model,
     structure: safeJson(row.structure_json, null),
     ask_thread: safeJson(row.ask_json, []),
+    usage: safeJson(row.usage_json, null),
+    paperUsage: safeJson(row.paper_usage_json, null),
+    outline: safeJson(row.outline_json, null),
     pdf_path: row.pdf_path || '',
     pdfName: row.pdf_path ? path.basename(row.pdf_path) : '',
     blocks: parseBlocks(row.blocks_json),
@@ -108,19 +111,30 @@ export function savePaper(patch = {}) {
     ask_json: JSON.stringify(
       patch.ask_thread !== undefined ? patch.ask_thread || [] : existing?.ask_thread || [],
     ),
+    usage_json: JSON.stringify(
+      patch.usage !== undefined ? patch.usage || null : existing?.usage ?? null,
+    ),
+    paper_usage_json: JSON.stringify(
+      patch.paperUsage !== undefined ? patch.paperUsage || null : existing?.paperUsage ?? null,
+    ),
+    outline_json: JSON.stringify(
+      patch.outline !== undefined ? patch.outline || null : existing?.outline ?? null,
+    ),
     created_at: existing?.createdAt || stamp,
     updated_at: stamp,
   };
 
   conn
     .prepare(
-      `INSERT INTO papers (id, title, source, kind, text, chars, pdf_path, reading_md, reading_model, structure_json, ask_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO papers (id, title, source, kind, text, chars, pdf_path, reading_md, reading_model, structure_json, ask_json, usage_json, paper_usage_json, outline_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          title=excluded.title, source=excluded.source, kind=excluded.kind, text=excluded.text,
          chars=excluded.chars, pdf_path=excluded.pdf_path, reading_md=excluded.reading_md,
          reading_model=excluded.reading_model, structure_json=excluded.structure_json,
-         ask_json=excluded.ask_json, updated_at=excluded.updated_at`,
+         ask_json=excluded.ask_json, usage_json=excluded.usage_json,
+         paper_usage_json=excluded.paper_usage_json,
+         outline_json=excluded.outline_json, updated_at=excluded.updated_at`,
     )
     .run(
       merged.id,
@@ -134,6 +148,9 @@ export function savePaper(patch = {}) {
       merged.reading_model,
       merged.structure_json,
       merged.ask_json,
+      merged.usage_json,
+      merged.paper_usage_json,
+      merged.outline_json,
       merged.created_at,
       merged.updated_at,
     );

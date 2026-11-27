@@ -17,6 +17,74 @@ const LS_DIAGRAM = 'paperlens.diagramCollapsed';
 const LS_PAPER_WIDTH = 'paperlens.paperWidth';
 
 /** 39,755 → 39.8k，给原文栏那行统计省宽度 */
+/** 合并两次调用的用量（精读 + 结构化），费用直接相加 */
+function mergeUsage(a, b) {
+  if (!a) return b ? { ...b } : null;
+  if (!b) return { ...a };
+  return {
+    prompt: (a.prompt || 0) + (b.prompt || 0),
+    completion: (a.completion || 0) + (b.completion || 0),
+    cached: (a.cached || 0) + (b.cached || 0),
+    total: (a.total || 0) + (b.total || 0),
+    cost: a.cost === null || b.cost === null ? null : (Number(a.cost) || 0) + (Number(b.cost) || 0),
+  };
+}
+
+/**
+ * 本篇累计用量：独立于「本次精读」的 readingUsage，重跑精读/清空追问都不归零。
+ * 只有换论文时才重置；每次产生用量（精读/结构化/追问）都累加进来。
+ */
+function totalUsage() {
+  return state.paperUsage;
+}
+
+/** 把一次调用的用量累加进本篇累计，并刷新徽标 */
+function accumulateUsage(usage) {
+  if (!usage) return;
+  state.paperUsage = mergeUsage(state.paperUsage, usage);
+  paintTotalUsage();
+}
+
+/** 精读栏标题区的「本篇累计」徽标 */
+function paintTotalUsage() {
+  const el = $('#total-usage');
+  if (!el) return;
+  const info = usageText(totalUsage());
+  if (!info) {
+    el.hidden = true;
+    el.textContent = '';
+    el.title = '';
+    return;
+  }
+  el.hidden = false;
+  el.textContent = `本篇累计 ${info.short}`;
+  el.title = `本篇论文累计用量（精读 + 结构化 + 所有追问）\n${info.title}`;
+}
+
+/** 精读状态栏：基础文案 + 用量合计 */
+function paintReadingStatus(base) {
+  const el = $('#reading-status');
+  const info = usageText(state.readingUsage);
+  el.textContent = info ? `${base} · ${info.short}` : base;
+  el.title = info ? info.title : '';
+  paintTotalUsage();
+}
+
+/** 用量对象 → 状态栏文案；无用量返回空串 */
+function usageText(u) {
+  if (!u || !Number(u.total)) return '';
+  const tokens = Number(u.total) >= 1000 ? `${(u.total / 1000).toFixed(1).replace(/\.0$/, '')}k` : String(u.total);
+  let cost = '';
+  if (u.cost === null || u.cost === undefined) cost = ' · 未配置单价';
+  else if (Number(u.cost) > 0) {
+    const v = Number(u.cost);
+    const text = v < 0.000001 ? '<¥0.000001' : `¥${v.toFixed(6).replace(/0+$/, '').replace(/\.$/, '')}`;
+    cost = ` · ${text}`;
+  }
+  const detail = `输入 ${u.prompt || 0}${u.cached ? `（缓存 ${u.cached}）` : ''} · 输出 ${u.completion || 0}${cost} · 估算，以账单为准`;
+  return { short: `${tokens} tokens${cost}`, title: detail };
+}
+
 function formatCount(n) {
   const v = Number(n) || 0;
   if (v >= 1e6) return `${(v / 1e6).toFixed(1).replace(/\.0$/, '')}M`;
@@ -42,12 +110,32 @@ const state = {
   selection: '',
   askThread: [],
   webSearch: localStorage.getItem('paperlens.askWeb') !== '0',
+  readingUsage: null,
+  paperUsage: null,
+  outline: null,
+  outlineExpanded: new Set(),
   hasPdf: false,
+  pdfReady: null,
   pdfPages: 0,
   paperView: 'text',
 };
 
-const diagram = createDiagram($('#diagram-host'));
+// 追问轮次：每个「问题 + 回答」共用一个 id，供单轮删除使用
+let askTurnSeq = 0;
+const askControllers = new Map();
+function nextAskTurn() {
+  return `t${++askTurnSeq}`;
+}
+
+const diagram = createDiagram($('#diagram-host'), {
+  onNodeClick: (nodeId, node) => {
+    if (!nodeId || !node) {
+      $$('#concept-list .concept-chip').forEach((c) => c.classList.remove('active'));
+      return;
+    }
+    highlightConceptForNode(node);
+  },
+});
 const pdfView = createPdfView($('#paper-pdf'), {
   onAsk: (text) => promptAskWith(text),
   onNotice: (msg) => toast(msg),
@@ -122,46 +210,120 @@ async function postJson(url, body) {
 
 const LS_KG = 'paperlens.kg';
 
-function graphLink() {
+/** 推送记录：兼容旧的单条对象与新式数组 */
+function graphLinks() {
+  let data;
   try {
-    return JSON.parse(localStorage.getItem(LS_KG) || 'null');
+    data = JSON.parse(localStorage.getItem(LS_KG) || 'null');
   } catch {
-    return null;
+    return [];
   }
+  const list = Array.isArray(data) ? data : data ? [data] : [];
+  return list.filter((x) => x && x.sourceId);
 }
 
-/** 当前论文是否已经推送到图谱（标题 + 正文字数一致即视为同一篇） */
+function saveGraphLinks(links) {
+  localStorage.setItem(LS_KG, JSON.stringify(links));
+}
+
+/** 当前论文已推送到的图谱记录（标题 + 正文字数一致即视为同一篇） */
 function graphLinkMatches() {
-  const linked = graphLink();
-  return Boolean(
-    linked && linked.sourceId && linked.title === state.paper.title && linked.textLen === state.paper.text.length,
+  return graphLinks().filter(
+    (x) => x.title === state.paper.title && x.textLen === state.paper.text.length,
   );
 }
 
 function updateGraphButton() {
   const btn = $('#btn-to-graph');
   if (!btn) return;
-  const linked = graphLinkMatches();
-  btn.dataset.linked = linked ? '1' : '';
-  btn.textContent = linked ? '已在图谱中 · 查看' : '→ 知识图谱';
-  btn.title = linked ? '打开知识图谱中这条资料的出处' : '把论文、精读与概念推送到知识图谱';
+  const links = graphLinkMatches();
+  btn.dataset.linked = links.length ? '1' : '';
+  btn.textContent = links.length ? `已在 ${links.length} 个图谱中 · 查看` : '→ 知识图谱';
+  btn.title = links.length
+    ? `打开知识图谱中这条资料的出处（已推送到 ${links.map((x) => x.graphName || x.graphId || '默认').join('、')}）`
+    : '把论文、精读与概念推送到知识图谱';
 }
 
-/** 一键入库：论文正文 + 精读 + 结构化结果。同进程直接调用，不经 HTTP 跨端口 */
+/**
+ * 弹出「选择目标图谱」对话框。
+ * @returns {Promise<Array<{id,name}>|null>} 选中的图谱；取消返回 null
+ */
+function openPushGraphDialog(graphs, currentGraphId, pushedIds) {
+  const dlg = $('#dlg-push-graph');
+  const list = $('#push-graph-list');
+  const error = $('#push-graph-error');
+  error.hidden = true;
+  if (!graphs.length) {
+    toast('还没有知识图谱，请先到知识图谱页创建一个');
+    return Promise.resolve(null);
+  }
+  list.innerHTML = graphs
+    .map((g) => {
+      const checked = pushedIds.has(g.id) || (g.id === currentGraphId && !pushedIds.size) || g.active;
+      const note = pushedIds.has(g.id) ? '<span class="push-graph-done">已推送</span>' : '';
+      return `<label class="push-graph-row"><input type="checkbox" data-graph-id="${escapeHtml(g.id)}"${checked ? ' checked' : ''} /><span class="push-graph-name">${escapeHtml(g.name || g.id)}</span>${note}</label>`;
+    })
+    .join('');
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      dlg.close();
+      resolve(value);
+    };
+    $('#btn-push-graph-close').onclick = () => finish(null);
+    $('#btn-push-graph-confirm').onclick = () => {
+      const picked = $$('#push-graph-list input:checked').map((el) => ({
+        id: el.dataset.graphId,
+        name: el.closest('.push-graph-row').querySelector('.push-graph-name').textContent,
+      }));
+      if (!picked.length) {
+        error.textContent = '请至少选择一个知识图谱';
+        error.hidden = false;
+        return;
+      }
+      finish(picked);
+    };
+    dlg.addEventListener('cancel', () => finish(null), { once: true });
+    openDialog('#dlg-push-graph');
+  });
+}
+
+/**
+ * 一键入库：论文正文 + 精读 + 结构化结果，推送到用户选中的多个图谱。
+ * 注意：?graph= 会全局激活目标图谱，因此必须串行，且结束后恢复原激活图谱。
+ */
 async function pushToGraph() {
   if (!state.paper.text) return toast('先放一篇论文进来');
   if (!state.readingText.trim()) return toast('先生成精读，再推送到知识图谱');
-  if (graphLinkMatches()) {
-    location.href = `/kg/?source=${encodeURIComponent(graphLink().sourceId)}`;
-    return;
+
+  // 拉图谱列表 + 当前已推送记录，弹出多选对话框
+  let graphs = [];
+  let originalGraphId = '';
+  try {
+    const res = await fetch('/api/kg/graphs').then((r) => r.json());
+    graphs = Array.isArray(res.graphs) ? res.graphs : [];
+    originalGraphId = res.graph?.id || '';
+  } catch (err) {
+    return toast(`读取图谱列表失败：${err.message}`);
   }
+  const existing = graphLinkMatches();
+  const picked = await openPushGraphDialog(
+    graphs,
+    originalGraphId,
+    new Set(existing.map((x) => x.graphId)),
+  );
+  if (!picked) return;
+
   const btn = $('#btn-to-graph');
   const oldText = btn.textContent;
   btn.disabled = true;
   btn.textContent = '推送中…';
   try {
     if (!state.paperId) await saveCurrentPaper();
-    const res = await postJson('/api/kg/import/paper', {
+    const payload = {
       paper: {
         id: state.paperId || '',
         title: state.paper.title,
@@ -172,22 +334,43 @@ async function pushToGraph() {
       reading: state.readingText,
       structure: state.structure,
       enrich: Boolean(state.config?.ready),
-    });
-    if (res.ok === false) throw new Error(res.error || '推送失败');
-    const sourceId = res.source?.id || '';
-    localStorage.setItem(
-      LS_KG,
-      JSON.stringify({
-        sourceId,
+    };
+
+    const done = [];
+    let lastResult = null;
+    // 串行：每次 ?graph= 会切换服务端激活图，不能并发
+    for (const g of picked) {
+      const res = await postJson(`/api/kg/import/paper?graph=${encodeURIComponent(g.id)}`, payload);
+      if (res.ok === false) throw new Error(`「${g.name}」推送失败：${res.error || '未知错误'}`);
+      done.push({
+        graphId: g.id,
+        graphName: g.name,
+        sourceId: res.source?.id || '',
         title: state.paper.title,
         textLen: state.paper.text.length,
         at: Date.now(),
-      }),
+      });
+      lastResult = res;
+    }
+
+    // 合并推送记录：同一篇论文 + 同一图谱只保留最新
+    const rest = graphLinks().filter(
+      (x) => !(x.title === state.paper.title && x.textLen === state.paper.text.length && done.some((d) => d.graphId === x.graphId)),
     );
+    saveGraphLinks([...rest, ...done]);
     updateGraphButton();
-    const count = res.concepts?.length || 0;
-    const warning = (res.warnings || [])[0];
-    toast(warning ? `已入库（${count} 个概念）：${warning}` : `已入库：${count} 个概念，点开可查看图谱`);
+
+    const count = lastResult?.concepts?.length || 0;
+    toast(`已推送到 ${done.length} 个图谱，共 ${count} 个概念（每图）`);
+
+    // 恢复用户原本激活的图谱，避免被最后一次 ?graph= 改掉
+    if (originalGraphId) {
+      try {
+        await postJson('/api/kg/graphs/activate', { id: originalGraphId });
+      } catch {
+        /* 恢复失败不影响推送结果 */
+      }
+    }
   } catch (err) {
     toast(`推送失败：${err.message}`);
   } finally {
@@ -230,6 +413,9 @@ function paperPayload() {
     reading_model: state.config?.model || '',
     structure: state.structure,
     ask_thread: state.askThread,
+    usage: state.readingUsage,
+    paperUsage: state.paperUsage,
+    outline: state.outline,
   };
 }
 
@@ -292,7 +478,9 @@ async function restorePdfFromServer(id) {
     if (!state.paper.text && String(result.text || '').trim().length > 100) {
       state.paper.text = result.text;
       renderPaper();
+      renderOutline(); // PDF 抽出正文后才显示章节入口
       schedulePaperSave(600);
+      if (!state.outline) loadOutline();
     }
     switchPaperView('pdf');
     return true;
@@ -306,6 +494,13 @@ async function restorePdfFromServer(id) {
 function applyPaperRecord(record) {
   state.paperId = record.id;
   localStorage.setItem(LS_LAST_PAPER, record.id);
+  // 必须在 setPaper() 之前恢复：setPaper 内部有延迟保存，
+  // 若此时 readingUsage / outline 还是旧值，会把库里正确的数据覆盖掉
+  // paper_usage_json 存本篇累计（跨多次精读/追问）；usage_json 只存本次精读。
+  // 老论文没有 paperUsage 字段：用 usage 兜底一次，之后走独立累计。
+  state.paperUsage = record.paperUsage || record.usage || null;
+  state.readingUsage = record.usage || null;
+  state.outline = record.outline || null;
   setPaper({ title: record.title, text: record.text, source: record.source }, { keepReading: true });
   // 翻译页抽好的分块：有就直接用，两个视图的框才能对得上
   state.blocks = Array.isArray(record.blocks?.blocks) ? record.blocks.blocks : null;
@@ -318,7 +513,7 @@ function applyPaperRecord(record) {
   readingCards = [];
   if (state.readingText.trim()) {
     paintReading();
-    $('#reading-status').textContent = '已保存';
+    paintReadingStatus('已保存');
   } else {
     clearReading();
   }
@@ -331,13 +526,39 @@ function applyPaperRecord(record) {
   }
 
   clearAskThread();
+  let restoredTurn = '';
   for (const msg of Array.isArray(record.ask_thread) ? record.ask_thread : []) {
     if (!msg || !msg.role) continue;
-    pushAsk(msg.role, String(msg.text || ''), String(msg.quote || ''));
+    // 老记录没有轮次 id：按 user→assistant 顺序重建，后续回答沿用该轮 id
+    if (msg.role === 'user') restoredTurn = nextAskTurn();
+    pushAsk(msg.role, String(msg.text || ''), String(msg.quote || ''), msg.usage || null, restoredTurn);
   }
+  paintTotalUsage();
 
-  if (record.hasPdf) restorePdfFromServer(record.id);
+  // PDF 异步恢复：存下 Promise，供目录跳转等待（否则刚打开就点目录会误跳文本视图）
+  state.pdfReady = record.hasPdf
+    ? restorePdfFromServer(record.id)
+    : Promise.resolve(false);
   updateGraphButton();
+  // 老论文可能没有 anchors（概念会退化成从头找词→跳摘要），自动补算一次
+  ensureStructureAnchors(record.id);
+}
+
+/** 补齐老论文的 concept anchors：用已有 outline + 正文补算，不重跑精读/模型 */
+async function ensureStructureAnchors(id) {
+  const concepts = state.structure?.concepts || [];
+  if (!concepts.length || !state.outline?.sections?.length) return;
+  if (concepts.every((c) => Array.isArray(c.anchors))) return;
+  try {
+    const res = await postJson('/api/paper/anchors', { id });
+    if (res.ok && res.structure?.concepts?.length) {
+      state.structure = res.structure;
+      renderStructure(res.structure);
+      renderOutline();
+    }
+  } catch {
+    /* 补算失败不影响主流程 */
+  }
 }
 
 async function loadPaperById(id) {
@@ -488,15 +709,155 @@ function renderPaper() {
 
   empty.hidden = true;
   body.hidden = !state.paper.text || (state.hasPdf && state.paperView === 'pdf');
+  const sectionOf = state.outline?.sectionOf || [];
+  const sections = state.outline?.sections || [];
   body.innerHTML = parts
     .map((para, i) => {
-      const cls = isSectionTitle(para) ? ' class="section-title"' : '';
-      return `<p data-i="${i}"${cls}>${escapeHtml(para)}</p>`;
+      const cls = isSectionTitle(para) ? ' section-title' : '';
+      const secIdx = sectionOf[i];
+      const sec = secIdx >= 0 ? sections[secIdx] : null;
+      const data = `data-i="${i}"${sec ? ` data-section="${escapeHtml(sec.id)}"` : ''}`;
+      return `<p ${data}${cls ? ` class="${cls.trim()}"` : ''}>${escapeHtml(para)}</p>`;
     })
     .join('');
 
   const words = state.paper.text.replace(/\s+/g, '').length;
   $('#paper-stats').textContent = `${formatCount(words)} 字 · ${parts.length} 段`;
+}
+
+/* ------------------------------ 论文章节目录 ------------------------------ */
+
+/** 章节解析用的正文：纯文本论文用 paper.text，PDF 论文复用 pdfView 已抽好的文本 */
+function paperTextForOutline() {
+  const direct = String(state.paper?.text || '').trim();
+  if (direct.length > 60) return direct;
+  if (pdfView.isLoaded()) {
+    const pdfText = String(pdfView.getText() || '').trim();
+    if (pdfText.length > 60) return pdfText;
+  }
+  return '';
+}
+
+/** 按 concept 的 anchor.section 反查每节涉及的概念 */
+function conceptsBySection() {
+  const map = new Map();
+  for (const c of state.structure?.concepts || []) {
+    const anchors = Array.isArray(c.anchors) ? c.anchors : [];
+    const sid = anchors[0]?.section || '';
+    if (!sid) continue;
+    if (!map.has(sid)) map.set(sid, []);
+    map.get(sid).push(c);
+  }
+  return map;
+}
+
+/**
+ * 精读页目录提供者：shell.js 按当前视图拉取，统一渲染/展开/点击分发。
+ * 返回 null 表示当前没有可用正文，目录不显示。
+ */
+function getPaperOutlineProvider() {
+  if (!paperTextForOutline() && !state.outline?.sections?.length) return null;
+  return {
+    outline: () => state.outline,
+    expanded: () => state.outlineExpanded,
+    onPick: (id) => jumpToSection(id),
+    onResolve: async () => {
+      await loadOutline({ force: true });
+      state.outlineExpanded.clear();
+      renderOutline();
+    },
+  };
+}
+
+/** 刷新侧栏目录（外壳统一渲染，这里只触发） */
+function renderOutline() {
+  window.paperlens?.refreshOutline?.();
+}
+
+/** 高亮侧栏目录树里当前章节 */
+function markActiveSection(sectionId) {
+  $$('#side-outline [data-section]').forEach((b) => b.classList.toggle('active', b.dataset.section === sectionId));
+}
+
+/** 目录项点击：优先跳 PDF 原版对应章节标题，失败再退回文本视图 */
+async function jumpToSection(sectionId) {
+  const sec = (state.outline?.sections || []).find((s) => s.id === sectionId);
+  if (!sec) return;
+
+  // PDF 是异步恢复的：刚打开论文就点目录时先等它加载完（超时则退回文本）。
+  // 无条件 await（已完成的 Promise 会立即返回），避免依赖 isLoaded() 的竞态——
+  // setPaper 会 destroy pdfView，导致"看似已加载、实际正在重新加载"的窗口期。
+  if (state.pdfReady) {
+    await Promise.race([
+      state.pdfReady.catch(() => false),
+      new Promise((resolve) => setTimeout(() => resolve(false), 8000)),
+    ]);
+  }
+
+  // 有 PDF 就跳 PDF 页：heading 段匹配 → 滚到该标题热区
+  // 只用 pdfView.isLoaded() 判断（不叠加 state.hasPdf）——后者在 setPaper 时序里可能还是 false，
+  // 而 pdfView 加载完成本身就足以证明有 PDF 可跳。
+  if (pdfView.isLoaded()) {
+    switchPaperView('pdf');
+    try {
+      await pdfView.mount();
+      const hit = pdfView.locateSection(sec.number, sec.title);
+      if (hit) {
+        markActiveSection(sectionId);
+        return;
+      }
+    } catch { /* 失败退回文本视图 */ }
+  }
+
+  switchPaperView('text');
+  const target = $(`#paper-body p[data-section="${CSS.escape(sec.id)}"]`) || $(`#paper-body p[data-i="${sec.headingIndex}"]`);
+  if (!target) return;
+  target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  markActiveSection(sectionId);
+}
+
+/**
+ * 按需解析章节结构：优先读论文记录里已缓存的 outline，
+ * 否则调 /api/paper/outline（会触发一次轻量 LLM 整理）。
+ */
+async function loadOutline({ force = false } = {}) {
+  const text = paperTextForOutline();
+  if (!text) {
+    toast('论文正文还没抽取出来，请稍后再试或先用精读解析 PDF');
+    return;
+  }
+  // PDF 论文的正文在 pdfView 里，回写一份供下游（精读/追问/保存）复用
+  if (!String(state.paper.text || '').trim() && text === pdfView.getText()) {
+    state.paper.text = text;
+  }
+  const cached = state.outline;
+  if (cached && !force) {
+    state.outline = cached;
+    renderPaper();
+    renderOutline();
+    paintReading();
+    return;
+  }
+  try {
+    const res = await postJson('/api/paper/outline', {
+      id: state.paperId || undefined,
+      text,
+      force,
+    });
+    if (res.ok && res.outline?.sections?.length) {
+      state.outline = res.outline;
+      renderPaper();
+      renderOutline();
+      paintReading();
+      schedulePaperSave(300);
+      ensureStructureAnchors(state.paperId);
+      toast(`章节解析完成：${res.outline.sections.length} 节`);
+    } else {
+      toast('正文里没识别出章节标题，目录暂不可用');
+    }
+  } catch (err) {
+    toast(`章节解析失败：${err.message || '未知错误'}`);
+  }
 }
 
 function setPaper(paper, { keepReading = false } = {}) {
@@ -511,19 +872,25 @@ function setPaper(paper, { keepReading = false } = {}) {
   state.translations = [];
   pdfView.setTranslations([]);
   if (!state.hasPdf) pdfView.destroy();
+  state.pdfReady = null; // 旧论文的 PDF 恢复 Promise 失效
 
   $('#paper-title').value = state.paper.title;
   $('#paper-view-switch').hidden = !state.hasPdf;
   renderPaper();
   switchPaperView(state.hasPdf ? 'pdf' : 'text');
   if (!keepReading) {
+    state.outline = null;
+    state.paperUsage = null; // 换论文：本篇累计归零
     clearReading();
     clearAskThread(); // 换论文后旧追问不能带进新论文的报告
     renderStructure(null); // 同时清空概念卡与图解
   }
+  renderOutline();
   persistPaper();
   updateGraphButton();
   schedulePaperSave(300);
+  // 章节结构按需解析：有缓存直接用，没有则异步请求（服务端也会缓存结果）
+  if (state.paper.text && !state.outline) loadOutline();
 }
 
 /** PDF 原版 / 纯文本两种原文视图切换 */
@@ -540,7 +907,7 @@ function switchPaperView(view) {
     const chars = state.paper.text.replace(/\s+/g, '').length;
     const zhCount = state.translations.length;
     $('#paper-stats').textContent = `${state.pdfPages} 页 · ${formatCount(chars)} 字${
-      zhCount ? ` · ${zhCount} 段译文（点段落看中文）` : ''
+      zhCount ? ` · ${zhCount} 段译文` : ''
     }`;
     pdfView
       .mount()
@@ -659,6 +1026,9 @@ async function restoreCachedPdf() {
 
 const READING_EMPTY_HTML =
   '<div class="empty-state"><p class="empty-title">还没有精读结果</p><p class="empty-sub">点右上角「开始精读」，AI 会按固定小节拆解这篇论文。</p></div>';
+// 本次用量条随精读列表滚动：innerHTML 重建时必须一起拼回去，否则会被清掉
+const READING_USAGE_HTML =
+  '<div class="reading-usage-bar"><span id="reading-status" class="pane-meta"></span></div>';
 
 /**
  * 精读卡片按小节增量维护：流式时只重画内容变化的那一张，
@@ -673,11 +1043,13 @@ let demoToastShown = false;
 function clearReading() {
   state.readingText = '';
   state.structure = null;
+  state.readingUsage = null;
   clearTimeout(readingRenderTimer);
   readingRenderTimer = 0;
   readingCards = [];
-  $('#reading-list').innerHTML = READING_EMPTY_HTML;
+  $('#reading-list').innerHTML = READING_EMPTY_HTML + READING_USAGE_HTML;
   $('#reading-status').textContent = '';
+  paintTotalUsage();
 }
 
 function queueReadingRender() {
@@ -700,10 +1072,34 @@ function ensureReadingCard(list, index) {
   body.className = 'reading-body';
   node.appendChild(heading);
   node.appendChild(body);
-  list.appendChild(node);
+  // 用量条固定在列表末尾，新卡片插到它前面（否则 appendChild 会把用量条顶到上面）
+  const usageBar = list.querySelector('.reading-usage-bar');
+  if (usageBar) list.insertBefore(node, usageBar);
+  else list.appendChild(node);
   entry = { node, heading, body, html: '', title: '' };
   readingCards[index] = entry;
   return entry;
+}
+
+/** 精读小节 → 依据的论文章节编号（关键词匹配 outline 标题） */
+function sectionForReadingTitle(title) {
+  const sections = state.outline?.sections || [];
+  if (!sections.length) return '';
+  const rules = [
+    [/^一句话结论$/, /摘要|abstract|结论|conclusion/i],
+    [/实验与结论/, /实验|结果|experiment|result|evaluation/i],
+    [/问题|痛点/, /引言|背景|问题|introduction|motivation/i],
+    [/核心方法|方法/, /方法|method|approach|model|架构/i],
+    [/创新/, /创新|贡献|contribution|方法|method/i],
+    [/局限|延伸/, /局限|讨论|limitation|discussion|future/i],
+    [/结论|总结/, /结论|conclusion/i],
+  ];
+  for (const [titleRe, sectionRe] of rules) {
+    if (!titleRe.test(title)) continue;
+    const sec = sections.find((s) => sectionRe.test(`${s.number} ${s.title} ${s.summary || ''}`));
+    if (sec) return `§${sec.number || sec.title}`;
+  }
+  return '';
 }
 
 function paintReading() {
@@ -715,19 +1111,23 @@ function paintReading() {
   if (!sections.length) {
     if (!streaming && state.readingError) {
       readingCards = [];
-      list.innerHTML = `<div class="reading-error">${escapeHtml(state.readingError)}</div>`;
+      list.innerHTML = `<div class="reading-error">${escapeHtml(state.readingError)}</div>` + READING_USAGE_HTML;
       return;
     }
     if (readingCards.length) {
       readingCards = [];
-      list.innerHTML = '<div class="empty-state"><p class="empty-sub">正在生成…</p></div>';
+      list.innerHTML = '<div class="empty-state"><p class="empty-sub">正在生成…</p></div>' + READING_USAGE_HTML;
     }
     return;
   }
 
   const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 120;
-  // 第一张卡片出现时清掉「正在生成…」占位
-  if (!readingCards.length && list.querySelector('.empty-state')) list.innerHTML = '';
+  // 第一张卡片出现时清掉「正在生成…」占位；只删占位节点，别用 innerHTML=''
+  // 否则会把末尾的用量条一起清掉
+  if (!readingCards.length) {
+    const empty = list.querySelector('.empty-state');
+    if (empty) empty.remove();
+  }
 
   while (readingCards.length > sections.length) {
     const extra = readingCards.pop();
@@ -741,6 +1141,14 @@ function paintReading() {
     entry.node.classList.toggle('streaming', isLast);
     if (entry.title !== title) {
       entry.heading.textContent = title;
+      const ref = sectionForReadingTitle(title);
+      if (ref) {
+        const tag = document.createElement('span');
+        tag.className = 'reading-section-ref';
+        tag.textContent = ref;
+        tag.title = '依据论文章节';
+        entry.heading.appendChild(tag);
+      }
       entry.title = title;
     }
     // 只有内容真的变了才重排；公式只在流式结束后渲染，
@@ -805,9 +1213,14 @@ function renderStructure(data) {
   }
 
   conceptList.innerHTML = (data.concepts || [])
-    .map((c) => {
+    .map((c, i) => {
       const terms = conceptTerms(c);
-      return `<button class="concept-chip" type="button" data-terms="${escapeHtml(JSON.stringify(terms))}" title="在原文中定位：${escapeHtml(terms.join(' / '))}"><b>${escapeHtml(c.name)}</b><span>${escapeHtml(c.explain)}</span></button>`;
+      const anchors = Array.isArray(c.anchors) ? c.anchors : [];
+      const section = anchors[0]?.section
+        ? (state.outline?.sections || []).find((s) => s.id === anchors[0].section)?.title || anchors[0].section
+        : '';
+      const title = `在原文中定位：${terms.join(' / ')}${section ? `\n依据章节：${section}` : ''}`;
+      return `<button class="concept-chip" type="button" data-i="${i}" data-name="${escapeHtml(c.name)}" data-terms="${escapeHtml(JSON.stringify(terms))}" data-anchors="${escapeHtml(JSON.stringify(anchors))}" title="${escapeHtml(title)}"><b>${escapeHtml(c.name)}</b><span>${escapeHtml(c.explain)}</span></button>`;
     })
     .join('');
 
@@ -815,9 +1228,7 @@ function renderStructure(data) {
     .map((c) => `<div class="claim-row"><span class="claim-tag">${escapeHtml(c.label)}</span><span>${escapeHtml(c.text)}</span></div>`)
     .join('');
 
-  if (data.tags?.length) {
-    $('#diagram-status').textContent = data.tags.map((t) => `#${t}`).join(' ');
-  }
+  // tags 不再显示在顶栏（避免宽度不足时换行），图解本身已体现方法链路
   if (data.diagram?.nodes?.length) {
     diagram.render(data.diagram);
   }
@@ -855,8 +1266,10 @@ async function runAnalysis() {
   readingSaveAt = Date.now();
   clearTimeout(readingRenderTimer);
   readingRenderTimer = 0;
+  state.readingUsage = null;
   renderStructure(null);
-  $('#reading-list').innerHTML = '<div class="empty-state"><p class="empty-sub">模型正在读这篇论文…</p></div>';
+  $('#reading-list').innerHTML =
+    '<div class="empty-state"><p class="empty-sub">模型正在读这篇论文…</p></div>' + READING_USAGE_HTML;
   $('#reading-status').textContent = '生成中';
   switchPaneIfNarrow('reading');
 
@@ -882,7 +1295,9 @@ async function runAnalysis() {
         } else if (evt.type === 'notice') {
           toast(evt.message, 4600);
         } else if (evt.type === 'done') {
-          $('#reading-status').textContent = evt.demo ? 'demo 示例结果' : '已完成';
+          state.readingUsage = evt.usage || null;
+          accumulateUsage(evt.usage); // 累加到本篇累计（重跑精读不清零）
+          paintReadingStatus(evt.demo ? 'demo 示例结果' : '已完成');
         } else if (evt.type === 'error') {
           state.readingError = evt.message;
           $('#reading-status').textContent = '出错';
@@ -920,7 +1335,19 @@ async function loadStructure() {
     });
     if (res.ok && res.data) {
       state.structure = res.data;
+      // /api/structure 已顺带算出 outline（规则层零成本），直接接住，避免章节功能失效
+      if (res.outline?.sections?.length) {
+        state.outline = res.outline;
+        renderPaper();
+      }
       renderStructure(res.data);
+      renderOutline();
+      paintReading();
+      if (res.usage) {
+        state.readingUsage = mergeUsage(state.readingUsage, res.usage);
+        accumulateUsage(res.usage);
+        paintReadingStatus('已完成');
+      }
       schedulePaperSave(300);
       if (res.demo && !demoToastShown) {
         demoToastShown = true;
@@ -936,6 +1363,63 @@ async function loadStructure() {
   }
 }
 
+/** 图解节点点击 → 反向高亮对应概念卡，并提示原文引用 */
+/**
+ * 概念 chip 的统一定位入口：概念卡、章节地图里的概念都走这里。
+ * 三向联动：高亮图解节点 + 用 anchor 定位原文，失败退回术语匹配。
+ */
+function locateConcept(chip) {
+  switchPaneIfNarrow('paper');
+  const conceptName = chip.dataset.name || '';
+  const nodes = state.structure?.diagram?.nodes || [];
+  const matchedNode = nodes.find((n) => n.conceptRef === conceptName) ||
+    nodes.find((n) => n.conceptRef === chip.dataset.i) ||
+    nodes.find((n) => n.label && (conceptName.includes(n.label) || n.label.includes(conceptName)));
+  if (matchedNode) diagram.selectNode(matchedNode.id);
+
+  let anchors = [];
+  let terms = [];
+  try {
+    anchors = JSON.parse(chip.dataset.anchors || '[]');
+  } catch { /* ignore */ }
+  try {
+    terms = JSON.parse(chip.dataset.terms || '[]');
+  } catch { /* ignore */ }
+
+  if (anchors.length && locateAnchor(anchors[0])) return;
+  locateTerm(terms.length ? terms : [chip.dataset.term || '']);
+}
+
+function highlightConceptForNode(node) {
+  const chips = $$('#concept-list .concept-chip');
+  const name = String(node.conceptRef || node.label || '');
+  let hit = chips.find((c) => c.dataset.name === name);
+  if (!hit) {
+    hit = chips.find((c) => name && (c.dataset.name.includes(name) || name.includes(c.dataset.name)));
+  }
+  if (!hit && node.sectionRef) {
+    hit = chips.find((c) => {
+      try {
+        return (JSON.parse(c.dataset.anchors || '[]')[0]?.section || '') === node.sectionRef;
+      } catch {
+        return false;
+      }
+    });
+  }
+  chips.forEach((c) => c.classList.toggle('active', c === hit));
+  if (!hit) return;
+  hit.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  let anchors = [];
+  try {
+    anchors = JSON.parse(hit.dataset.anchors || '[]');
+  } catch {
+    anchors = [];
+  }
+  if (anchors.length && anchors[0].quote) {
+    toast(`原文：${anchors[0].quote.slice(0, 60)}${anchors[0].quote.length > 60 ? '…' : ''}`, 3200);
+  }
+}
+
 /* ---------------------------------- 追问 ---------------------------------- */
 
 /** 追问回答渲染成 Markdown；流式期间未闭合的语法由 renderBlocks/inlineMd 原样保留 */
@@ -943,11 +1427,34 @@ function paintAskAnswer(el, text) {
   el.innerHTML = markAskCitations(renderBlocks(String(text || '').split('\n')));
 }
 
+/** 回答下方的用量行：done 帧到达时插入，位置在正文容器之后 */
+function paintAskUsage(target, usage) {
+  const info = usageText(usage);
+  if (!info) return;
+  const item = target.closest('.ask-item');
+  if (!item || item.querySelector('.ask-usage')) return;
+  const line = document.createElement('div');
+  line.className = 'ask-usage';
+  line.textContent = info.short;
+  line.title = info.title;
+  item.appendChild(line);
+}
+
 /** 追问对话同时存进 state.askThread，导出报告时要用（DOM 只是渲染结果） */
-function pushAsk(role, text, quote = '') {
+function pushAsk(role, text, quote = '', usage = null, turn = '') {
   const thread = $('#ask-thread');
   const div = document.createElement('div');
   div.className = `ask-item ${role === 'user' ? 'q' : 'a'}`;
+  if (turn) div.dataset.turn = turn;
+  // 每轮问题的左侧放一个小徽标，点开菜单可单独删除这一轮问答
+  if (role === 'user' && turn) {
+    const badge = document.createElement('div');
+    badge.className = 'ask-turn-badge';
+    badge.innerHTML =
+      '<button class="ask-turn-menu" type="button" aria-label="这轮问答选项" aria-expanded="false" title="这轮问答选项">⋯</button>' +
+      '<div class="ask-turn-popover" hidden><button class="ask-turn-delete" type="button">删除这轮问答</button></div>';
+    div.appendChild(badge);
+  }
   if (quote) {
     const q = document.createElement('span');
     q.className = 'quote';
@@ -958,9 +1465,19 @@ function pushAsk(role, text, quote = '') {
   if (role === 'user') content.textContent = text;
   else paintAskAnswer(content, text);
   div.appendChild(content);
+  const info = usageText(usage);
+  if (info) {
+    const line = document.createElement('div');
+    line.className = 'ask-usage';
+    line.textContent = info.short;
+    line.title = info.title;
+    div.appendChild(line);
+  }
   thread.appendChild(div);
   thread.scrollTop = thread.scrollHeight;
   const entry = { role, text: String(text || ''), quote: String(quote || '') };
+  if (turn) entry.turn = turn;
+  if (usage) entry.usage = usage;
   state.askThread.push(entry);
   // 历史消息恢复时补渲染公式（流式输出中途不渲染，避免 KaTeX 打断增量文本）
   if (role !== 'user') renderMathIn(content);
@@ -968,10 +1485,46 @@ function pushAsk(role, text, quote = '') {
   return { el: content, entry };
 }
 
+/** 关闭所有轮次菜单（可保留当前点击的那个） */
+function closeAskTurnMenus(except = null) {
+  $$('#ask-thread .ask-turn-badge.open').forEach((badge) => {
+    if (badge === except) return;
+    badge.classList.remove('open');
+    const btn = $('.ask-turn-menu', badge);
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+    const pop = $('.ask-turn-popover', badge);
+    if (pop) pop.hidden = true;
+  });
+}
+
+/** 只删除某一轮：问题 + 它的回答（含用量行），其他轮次与累计用量不动 */
+function deleteAskTurn(turn) {
+  const removed = state.askThread.filter((entry) => entry.turn === turn);
+  if (!removed.length) return;
+  // 正在流式输出的回答：标记失效并中断请求，避免删掉后又写回已脱离 DOM 的节点
+  removed.forEach((entry) => { entry.deleted = true; });
+  const controller = askControllers.get(turn);
+  if (controller) {
+    controller.abort();
+    askControllers.delete(turn);
+  }
+  $$('#ask-thread .ask-item').forEach((el) => {
+    if (el.dataset.turn === turn) el.remove();
+  });
+  state.askThread = state.askThread.filter((entry) => entry.turn !== turn);
+  closeAskTurnMenus();
+  schedulePaperSave(200);
+  toast('已删除这轮问答');
+}
+
 function clearAskThread() {
+  for (const controller of askControllers.values()) controller.abort();
+  askControllers.clear();
+  state.askThread.forEach((entry) => { entry.deleted = true; });
   $('#ask-thread').innerHTML = '';
   state.askThread = [];
   state.selection = '';
+  paintTotalUsage();
 }
 
 /** 把一段原文交给追问区（PDF 段落卡片、选中文字都走这里） */
@@ -990,8 +1543,11 @@ async function ask(question, selection = '') {
     toast('先放一篇论文进来');
     return;
   }
-  pushAsk('user', question, selection);
-  const { el: target, entry: answerEntry } = pushAsk('assistant', '…');
+  const turn = nextAskTurn();
+  pushAsk('user', question, selection, null, turn);
+  const { el: target, entry: answerEntry } = pushAsk('assistant', '…', '', null, turn);
+  const controller = new AbortController();
+  askControllers.set(turn, controller);
   $('#ask-input').value = '';
   autoGrow($('#ask-input'));
 
@@ -1002,9 +1558,11 @@ async function ask(question, selection = '') {
       reading: state.readingText,
       structure: state.structure,
       askThread: state.askThread.slice(-6),
+      outline: state.outline || undefined,
       webSearch: state.webSearch,
       question,
     }, (evt) => {
+      if (answerEntry.deleted) return; // 这一轮已被单独删除
       if (evt.type === 'delta') {
         const pending = answerEntry.text === '…' || answerEntry.text === '思考中…';
         answerEntry.text = pending ? evt.text : answerEntry.text + evt.text;
@@ -1017,17 +1575,28 @@ async function ask(question, selection = '') {
         }
       } else if (evt.type === 'notice') {
         toast(evt.message || '提示', 3600);
+      } else if (evt.type === 'done') {
+        if (evt.usage) {
+          answerEntry.usage = evt.usage;
+          paintAskUsage(target, evt.usage);
+          accumulateUsage(evt.usage);
+          schedulePaperSave(200);
+        }
       } else if (evt.type === 'error') {
         answerEntry.text = `出错了：${evt.message}`;
         answerEntry.error = true;
         target.textContent = answerEntry.text;
       }
-    });
+    }, controller.signal);
   } catch (err) {
+    if (answerEntry.deleted || err?.name === 'AbortError') return;
     answerEntry.text = `出错了：${err.message}`;
     answerEntry.error = true;
     target.textContent = answerEntry.text;
+  } finally {
+    askControllers.delete(turn);
   }
+  if (answerEntry.deleted) return;
   // 流式结束后再渲染公式：写到一半的 $...$ 不会被 KaTeX 拆坏
   if (!answerEntry.error) await renderMathIn(target);
   // 完整回答已经写回 answerEntry，补一次保存
@@ -1177,6 +1746,45 @@ function findTerm(text, term) {
 }
 
 /** 概念定位：依次尝试原文检索词（英文术语/缩写）→ 中文名，PDF 与文本视图都支持 */
+/**
+ * 按服务端算好的 anchor 定位原文：文本视图直接用段落索引与偏移包 <mark>，
+ * PDF 视图用 anchor.quote 反查段落热区。返回是否命中。
+ */
+function locateAnchor(anchor) {
+  if (!anchor) return false;
+  if (state.hasPdf && state.paperView === 'pdf') {
+    // 术语比整句更适合词级高亮；句子兜底（PDF 抽取文本可能与原文有出入）
+    if (anchor.term && pdfView.locate(anchor.term)) return true;
+    return anchor.quote ? pdfView.locate(anchor.quote) : false;
+  }
+  const target = $(`#paper-body p[data-i="${Number(anchor.paragraph)}"]`);
+  if (!target) return false;
+
+  $$('#paper-body mark').forEach((m) => {
+    const parent = m.parentNode;
+    parent.replaceChild(document.createTextNode(m.textContent), m);
+    parent.normalize();
+  });
+  const text = target.textContent || '';
+  const offset = Math.max(0, Math.min(Number(anchor.offset) || 0, text.length - 1));
+  // 从 offset 向前找检索词的起点；anchor.term 是服务端记下的命中词
+  const term = String(anchor.term || '');
+  let start = offset;
+  if (term) {
+    const at = text.toLowerCase().indexOf(term.toLowerCase(), Math.max(0, offset - term.length));
+    if (at >= 0) start = at;
+  }
+  const len = Math.max(1, term.length);
+  const before = text.slice(0, start);
+  const matched = text.slice(start, start + len);
+  const after = text.slice(start + len);
+  target.innerHTML = `${escapeHtml(before)}<mark>${escapeHtml(matched)}</mark>${escapeHtml(after)}`;
+  target.classList.add('focused');
+  target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  setTimeout(() => target.classList.remove('focused'), 2200);
+  return true;
+}
+
 function locateTerm(input) {
   const terms = (Array.isArray(input) ? input : [input])
     .map((term) => String(term || '').trim())
@@ -1635,12 +2243,15 @@ function bindEvents() {
 
   $('#btn-sample-2').onclick = loadSample;
 
-  // 原文栏右上角的载入入口
-  $('#btn-upload-pdf').onclick = () => {
-    const input = $('#file-input');
-    input.value = '';
-    input.click();
-  };
+  // 原文栏右上角的载入入口（按钮已从顶栏移除，保留可选绑定兼容其它入口）
+  const uploadPdfBtn = $('#btn-upload-pdf');
+  if (uploadPdfBtn) {
+    uploadPdfBtn.onclick = () => {
+      const input = $('#file-input');
+      input.value = '';
+      input.click();
+    };
+  }
   $('#btn-sample-dialog').onclick = async () => {
     await loadSample();
     $('#dlg-open').close();
@@ -1765,6 +2376,33 @@ function bindEvents() {
   };
   $('#btn-ask-clear').onclick = clearAskThread;
 
+  // 每轮问题左侧的徽标：点开菜单 → 只删除这一轮问答
+  $('#ask-thread').addEventListener('click', (ev) => {
+    const menu = ev.target.closest('.ask-turn-menu');
+    if (menu) {
+      const badge = menu.closest('.ask-turn-badge');
+      const wasOpen = badge.classList.contains('open');
+      closeAskTurnMenus();
+      if (!wasOpen) {
+        badge.classList.add('open');
+        menu.setAttribute('aria-expanded', 'true');
+        const pop = $('.ask-turn-popover', badge);
+        if (pop) pop.hidden = false; // hidden 不去掉，CSS 的 [hidden] 规则会一直压住弹层
+      }
+      return;
+    }
+    const del = ev.target.closest('.ask-turn-delete');
+    if (del) {
+      const item = del.closest('.ask-item');
+      if (item?.dataset.turn) deleteAskTurn(item.dataset.turn);
+      return;
+    }
+    if (!ev.target.closest('.ask-turn-badge')) closeAskTurnMenus();
+  });
+  document.addEventListener('click', (ev) => {
+    if (!ev.target.closest('.ask-turn-badge')) closeAskTurnMenus();
+  });
+
   // 联网增强开关：默认开，状态存 localStorage
   const webToggle = $('#btn-ask-web');
   const paintWebToggle = () => {
@@ -1847,18 +2485,10 @@ function bindEvents() {
     promptAskWith(state.selection);
   };
 
-  // 概念定位
+  // 概念定位：优先用 anchor（节+段落索引），失败再退回术语字符串匹配
   $('#concept-list').onclick = (ev) => {
     const chip = ev.target.closest('.concept-chip');
-    if (!chip) return;
-    switchPaneIfNarrow('paper');
-    let terms = [];
-    try {
-      terms = JSON.parse(chip.dataset.terms || '[]');
-    } catch {
-      terms = [];
-    }
-    locateTerm(terms.length ? terms : [chip.dataset.term || '']);
+    if (chip) locateConcept(chip);
   };
 
   // 导出报告
@@ -1886,7 +2516,8 @@ function bindEvents() {
   // 推送到知识图谱
   $('#btn-to-graph').onclick = pushToGraph;
 
-  // 图解工具
+  // 侧栏目录树的渲染/展开/点击由 shell.js 统一分发，精读页通过 renderOutline() 注册提供者
+
   $('#btn-diagram-relayout').onclick = () => diagram.relayout();
   $('#btn-diagram-fit').onclick = () => diagram.fit();
   $('#btn-diagram-export').onclick = exportDiagram;
@@ -2097,6 +2728,7 @@ window.paperlens = {
   ...(window.paperlens || {}),
   loadPaperById,
   refreshLibrary,
+  getPaperOutlineProvider,
 };
 
 main();

@@ -175,7 +175,7 @@ export function buildLayout(diagram, orientation = 'h') {
 
 /* ------------------------------- 渲染器 ------------------------------- */
 
-export function createDiagram(host) {
+export function createDiagram(host, { onNodeClick } = {}) {
   let raw = { nodes: [], edges: [] };
   let layout = buildLayout({ nodes: [], edges: [] });
   let svg = null;
@@ -358,8 +358,9 @@ export function createDiagram(host) {
     draw();
   }
 
-  function highlight(id) {
-    selected = selected === id ? null : id;
+  function applyHighlight(id) {
+    selected = id;
+    if (!nodeLayer) return;
     const groups = nodeLayer.querySelectorAll('.node-group');
     const neighbors = new Set([id]);
     for (const e of layout.edges) {
@@ -378,6 +379,24 @@ export function createDiagram(host) {
       p.classList.toggle('hl', on);
     });
     showPopover(id);
+  }
+
+  /** 外部驱动：强制选中某节点（不 toggle）；id 为空则清除 */
+  function selectNode(id) {
+    if (!id || !layout.byId.has(id)) {
+      applyHighlight(null);
+      return;
+    }
+    applyHighlight(id);
+  }
+
+  function highlight(id) {
+    const next = selected === id ? null : id;
+    applyHighlight(next);
+    if (typeof onNodeClick === 'function') {
+      const node = raw.nodes.find((n) => n.id === next);
+      onNodeClick(next, node || null);
+    }
   }
 
   function showPopover(id) {
@@ -537,5 +556,5 @@ export function createDiagram(host) {
     draw();
   }
 
-  return { render, fit, relayout, exportSvg };
+  return { render, fit, relayout, exportSvg, selectNode, clearSelection: () => selectNode(null) };
 }

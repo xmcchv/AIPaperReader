@@ -6,6 +6,7 @@
  * 后把结果交给 askMessages()。
  */
 import { READING_SECTIONS } from './prompts.mjs';
+import { splitParagraphs as splitParagraphsShared } from '../public/text.js';
 
 const STOPWORDS = new Set([
   '的', '了', '和', '是', '在', '有', '这', '那', '与', '及', '或', '把', '被', '从', '对', '为',
@@ -146,6 +147,38 @@ function scoreParagraph(text, { query, extra }, selectionTokens) {
 }
 
 /**
+ * 用 outline 章节语义加权选段：问题命中某个 concept 的术语时，
+ * 该 concept 的 anchor 所在章节的段落优先。章节是比字面 token 更强的语义信号。
+ */
+function rankParagraphsByOutline(outline, paperText, q, selectionTokens) {
+  if (!outline?.sections?.length) return null;
+  // 收集"问题/概念命中的章节"：用 outline 的 summary/title 与问题 token 比对
+  const boosted = new Set();
+  // q 是 buildQuery() 返回的 { query: Map, extra: Set }，检索词在 q.query 里
+  const qTokens = new Set(q.query.keys());
+  for (const sec of outline.sections) {
+    const secTokens = tokenize(`${sec.title} ${sec.summary}`);
+    if (secTokens.some((t) => qTokens.has(t))) boosted.add(sec.id);
+  }
+
+  const paras = splitParagraphsShared(paperText);
+  const sectionOf = outline.sectionOf || [];
+  const ranked = paras
+    .map((text, i) => {
+      const base = scoreParagraph(text, q, selectionTokens);
+      // sectionOf 用 0 表示第一节、-1 表示标题外段落，不能用真值判断
+      const idx = sectionOf[i];
+      const secId = Number.isInteger(idx) && idx >= 0 ? outline.sections[idx]?.id : '';
+      return { text, score: base + (secId && boosted.has(secId) ? 1.2 : 0) };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 2)
+    .map((x) => clip(x.text, 700));
+  return ranked.length ? ranked : null;
+}
+
+/**
  * 按预算裁剪：正文段 → 历史摘要 → 概念 → 选中片段。
  * 裁剪顺序与展示顺序分开——展示仍是「标题 / 选中片段 / 精读卡 / 原文 / 概念 / 对话 / 问题」。
  */
@@ -181,6 +214,7 @@ export function buildAskContext({
   structure = null,
   question = '',
   askThread = [],
+  outline = null,
 } = {}) {
   const cards = splitReadingCards(reading);
   const history = compressHistory(askThread);
@@ -209,12 +243,24 @@ export function buildAskContext({
     ? ranked
     : ['一句话结论', '核心方法', '精读要点'].map((t) => cards.find((c) => c.title === t)).filter(Boolean);
 
-  const rankedParagraphs = splitPaperParagraphs(paperText)
-    .map((text) => ({ text, score: scoreParagraph(text, q, selectionTokens) }))
-    .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 2)
-    .map((x) => clip(x.text, 700));
+  // 有 outline 时用章节语义加权选段，失败/无 outline 时退回原字面打分。
+  // outline 可能来自前端缓存的旧版本，形状不完整时不能把追问带崩。
+  let byOutline = null;
+  if (outline) {
+    try {
+      byOutline = rankParagraphsByOutline(outline, paperText, q, selectionTokens);
+    } catch {
+      byOutline = null;
+    }
+  }
+  const rankedParagraphs =
+    byOutline ||
+    splitPaperParagraphs(paperText)
+      .map((text) => ({ text, score: scoreParagraph(text, q, selectionTokens) }))
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 2)
+      .map((x) => clip(x.text, 700));
 
   const head = [];
   if (title) head.push(`论文标题：${clip(title, 100)}`);

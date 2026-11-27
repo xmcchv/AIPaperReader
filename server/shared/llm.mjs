@@ -2,6 +2,7 @@
  * OpenAI 兼容协议客户端：只要服务商提供 /chat/completions 就能用。
  * 不引任何 SDK，纯 fetch + SSE 手写解析，Node 18+ 内置即可运行。
  */
+import { normalizeUsage } from './usage.mjs';
 
 /** 把用户填的 base_url 归一化成 chat/completions 完整地址 */
 export function chatCompletionsUrl(baseUrl) {
@@ -70,6 +71,11 @@ function buildBody(cfg, { messages, stream, maxTokens, temperature, tools } = {}
   const extra = cfg.extra_body && typeof cfg.extra_body === 'object' && !Array.isArray(cfg.extra_body) ? cfg.extra_body : {};
   const body = { ...extra, model: cfg.model, messages, stream };
 
+  // 流式默认不返回 usage；内置服务商显式开启，自建/本地端点不发送未知参数
+  if (stream && !['custom', 'ollama'].includes(String(cfg.provider || '').toLowerCase())) {
+    body.stream_options = { include_usage: true };
+  }
+
   const mt = maxTokens ?? cfg.max_tokens;
   if (mt !== null && mt !== undefined && Number(mt) > 0) body.max_tokens = Number(mt);
 
@@ -100,6 +106,7 @@ export async function* streamChat(cfg, messages, { maxTokens, temperature, signa
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
   let finishReason = null;
+  let lastUsage = null;
 
   outer: while (true) {
     const { done, value } = await reader.read();
@@ -116,7 +123,12 @@ export async function* streamChat(cfg, messages, { maxTokens, temperature, signa
       if (payload === '[DONE]') break outer;
       try {
         const json = JSON.parse(payload);
-        const choice = json?.choices?.[0];
+        // usage 可能在独立的空 choices 块，也可能和 content 同块返回
+        if (json?.usage && typeof json.usage === 'object') {
+          lastUsage = normalizeUsage(json.usage);
+        }
+        if (!Array.isArray(json?.choices) || !json.choices.length) continue;
+        const choice = json.choices[0];
         if (choice?.finish_reason) finishReason = choice.finish_reason;
         const delta = choice?.delta || {};
         const reasoning = delta.reasoning_content ?? delta.reasoning;
@@ -131,7 +143,7 @@ export async function* streamChat(cfg, messages, { maxTokens, temperature, signa
       }
     }
   }
-  yield { channel: 'end', finishReason };
+  yield { channel: 'end', finishReason, usage: lastUsage };
 }
 
 /** 一次性返回完整文本（用于结构化 JSON、连通性测试） */
@@ -158,7 +170,7 @@ export async function completeChat(cfg, messages, { maxTokens, temperature, sign
       finishReason === 'length' ? '模型输出被 max_tokens 截断，请调大 max_tokens' : '模型返回了空内容',
     );
   }
-  return { content, finishReason };
+  return { content, finishReason, usage: normalizeUsage(json?.usage) };
 }
 
 /** 从可能带 ```json 围栏的文本里抠出第一个 JSON 对象 */

@@ -6,6 +6,7 @@ import {
   prefs, prefsReady, setPref, getStoreStats, migrateBrowserData, setStoreWarnHandler,
 } from './store.mjs';
 import { registerTopbarActions } from '../topbar.js';
+import { headingMatchScore } from '../pdfview.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
 
@@ -93,6 +94,9 @@ const state = {
   translateLocked: false,
   orderEdit: null,
   historyLoading: false,
+  // 与精读页共用的侧栏目录：章节结构 + 展开状态
+  outline: null,
+  outlineExpanded: new Set(),
 };
 
 let projectSaveTimer = 0;
@@ -628,6 +632,8 @@ async function openFile(file) {
 
     state.undoStack = [];
     applyBlocks();
+    // 侧栏目录：与精读页共用同一份 outline，异步加载（失败不影响翻译主流程）
+    loadTranslateOutline();
     // 分块是精读页 PDF 视图的输入，打开就先落一次，不必等翻译
     scheduleBlocksSave(600);
     renderCorrBadge();
@@ -3492,6 +3498,85 @@ function scrollPdfToBlock(b) {
   }
 }
 
+/* ---- 侧栏目录：与精读页共用 outline，点章节跳到对应 PDF 块 ---- */
+
+/** 取当前论文的章节结构：先读库里缓存，没有就用分块文本现解析一次 */
+async function loadTranslateOutline() {
+  const id = state.docId;
+  if (!id) return;
+  try {
+    const res = await fetch(`/api/paper/get?id=${encodeURIComponent(id)}`);
+    const data = res.ok ? await res.json() : null;
+    let outline = data?.paper?.outline || null;
+    if (!outline?.sections?.length && state.blocks.length) {
+      // 该论文还没在精读页解析过章节：用已有分块文本现跑一次（服务端会缓存）
+      const text = state.blocks
+        .slice()
+        .sort((a, b) => a.page - b.page || (a.idx || 0) - (b.idx || 0))
+        .map((b) => b.text)
+        .join('\n\n');
+      if (text.trim().length > 60) {
+        const gen = await fetch('/api/paper/outline', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, text }),
+        }).then((r) => r.json());
+        outline = gen?.outline || null;
+      }
+    }
+    state.outline = outline;
+    window.paperlens?.refreshOutline?.();
+  } catch {
+    /* 目录加载失败不影响翻译主流程 */
+  }
+}
+
+/** 章节 → 翻译页 block：复用精读页的标题匹配算法，保证两页跳到同一个标题 */
+function locateTranslateSection(sec) {
+  let best = null;
+  let bestScore = 0;
+  for (const b of state.blocks) {
+    const score = headingMatchScore(
+      { text: b.text, kind: b.kind, heading: b.kind === 'heading' },
+      sec.number,
+      sec.title,
+    );
+    if (score > bestScore) {
+      best = b;
+      bestScore = score;
+    }
+  }
+  return bestScore >= 8 ? best : null;
+}
+
+/** 点侧栏章节：跳到翻译页 PDF 里对应的标题块并高亮 */
+function jumpToTranslateSection(sectionId) {
+  const sec = (state.outline?.sections || []).find((s) => s.id === sectionId);
+  if (!sec) return;
+  const b = locateTranslateSection(sec);
+  if (!b) {
+    toast(`没在原文里找到「${sec.title}」对应的位置`, 'warn');
+    return;
+  }
+  setActive(b.id, { scrollPdf: true });
+  // 高亮目录项
+  $$('#side-outline [data-section]').forEach((el) => el.classList.toggle('active', el.dataset.section === sectionId));
+}
+
+/** 供外壳拉取的目录提供者 */
+function getTranslateOutlineProvider() {
+  if (!state.outline?.sections?.length) return null;
+  return {
+    outline: () => state.outline,
+    expanded: () => state.outlineExpanded,
+    onPick: (id) => jumpToTranslateSection(id),
+    onResolve: async () => {
+      state.outline = null;
+      await loadTranslateOutline();
+    },
+  };
+}
+
 function onBlockClick(id, key = 'main') {
   if (state.editing) {
     if (state.pickMode === 'order') {
@@ -4469,5 +4554,11 @@ async function boot() {
     } catch {}
   }
 }
+
+// 供外壳共享侧栏目录使用（shell.js 按当前视图拉取）
+window.paperlens = {
+  ...(window.paperlens || {}),
+  getTranslateOutlineProvider,
+};
 
 boot();

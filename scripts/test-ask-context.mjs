@@ -7,7 +7,8 @@ import assert from 'node:assert/strict';
 
 import { buildAskContext, compressHistory, splitReadingCards, tokenize } from '../server/context.mjs';
 import { askMessages } from '../server/prompts.mjs';
-import { markAskCitations, renderBlocks } from '../public/text.js';
+import { inlineMd, markAskCitations, renderBlocks } from '../public/text.js';
+import { parseOutlineRules } from '../server/paper/outline.mjs';
 
 let passed = 0;
 function test(name, fn) {
@@ -47,6 +48,13 @@ const STRUCTURE = {
   concepts: [{ name: '状态空间模型', explain: '用状态变量建模序列', terms: ['state space model', 'SSM'] }],
   claims: [{ label: '核心贡献', text: '输入依赖的选择机制' }],
 };
+
+const OUTLINE_PAPER = [
+  '1 状态更新',
+  '序列建模中的状态更新采用线性递推，这是本文的关键设计，吞吐优势非常明显。',
+  '2 实验结论',
+  '语言建模基准上优于同规模 Transformer，吞吐提升五倍，验证了选择机制的作用。',
+].join('\n');
 
 test('切卡：只保留 7 个固定小节', () => {
   const cards = splitReadingCards(READING);
@@ -124,6 +132,44 @@ test('structure：concepts 的 terms 参与打分', () => {
   assert.ok(b.cards.indexOf('§核心方法') <= a.cards.indexOf('§核心方法') || a.cards.indexOf('§核心方法') === -1);
 });
 
+test('outline：带章节结构的追问不崩溃，原文段正常带出', () => {
+  const outline = parseOutlineRules(OUTLINE_PAPER);
+  assert.ok(outline.sections.length >= 2);
+  const ctx = buildAskContext({
+    reading: READING,
+    paperText: OUTLINE_PAPER,
+    outline,
+    question: '状态更新是怎么做的？',
+  });
+  assert.ok(ctx.paragraphs >= 1, `paragraphs=${ctx.paragraphs}`);
+  assert.ok(ctx.block.includes('[原文段落]'));
+  assert.ok(ctx.block.includes('线性递推'), ctx.block);
+});
+
+test('outline：结构损坏时退回字面打分，不中断追问', () => {
+  const ctx = buildAskContext({
+    reading: READING,
+    paperText: OUTLINE_PAPER,
+    outline: { sections: [{ id: 's1', title: '状态更新', summary: '' }], sectionOf: null },
+    question: '状态更新是怎么做的？',
+  });
+  assert.ok(ctx.block.includes('用户问题：状态更新是怎么做的？'));
+  assert.ok(ctx.paragraphs >= 1);
+});
+
+test('outline：第一节 sectionOf=0 的段落也能拿到语义加权', () => {
+  const paper = [
+    '1 状态更新',
+    '第一节的正文内容涉及状态更新与线性递推，这一段写得更长一些用于拉开字面分数差距，状态更新在这里有详细说明。',
+    '2 实验',
+    '第二节正文也提到状态更新，但写得短。',
+  ].join('\n');
+  const outline = parseOutlineRules(paper);
+  const ctx = buildAskContext({ reading: READING, paperText: paper, outline, question: '状态更新怎么做？' });
+  // 无加权时第二段更短、字面分更高；加权后第一段应被选中
+  assert.ok(ctx.block.includes('第一节的正文内容'), ctx.block);
+});
+
 test('预算：超长输入被裁剪到 6900 字符内', () => {
   const ctx = buildAskContext({
     title: 'T'.repeat(500),
@@ -179,6 +225,36 @@ test('角标：中文方括号来源标记也转成 span', () => {
 test('角标：网络来源加 web 类', () => {
   const html = markAskCitations('<p>最新结果 [网络] 如下。</p>');
   assert.ok(html.includes('ask-cite web'), html);
+});
+
+test('inlineMd：算法名 A* / RRT* 的星号不被当斜体吞掉', () => {
+  const html = inlineMd('A* / Dijkstra：A* 额外用启发式函数。RRT* / Theta*：RRT* 随机采样。');
+  assert.ok(html.includes('A* / Dijkstra：A* 额外'), html);
+  assert.ok(html.includes('RRT* / Theta*：RRT* 随机采样'), html);
+  assert.ok(!html.includes('<em>'), html);
+});
+
+test('inlineMd：粗体里的算法名 **OctoMap + A*/RRT*** 正确', () => {
+  const html = inlineMd('**OctoMap + A*/RRT***：查询复杂度 O(logn)。');
+  assert.ok(html.includes('<strong>OctoMap + A*/RRT*</strong>'), html);
+  assert.ok(!html.includes('<em>'), html);
+});
+
+test('inlineMd：**D* Lite** 粗体与算法名共存', () => {
+  const html = inlineMd('**D* Lite**：在八叉树上增量搜索。');
+  assert.ok(html.includes('<strong>D* Lite</strong>'), html);
+});
+
+test('inlineMd：真正的斜体 / 粗体仍正常', () => {
+  const html = inlineMd('这是*斜体*和**粗体**，还有 A* 算法。');
+  assert.ok(html.includes('<em>斜体</em>'), html);
+  assert.ok(html.includes('<strong>粗体</strong>'), html);
+  assert.ok(html.includes('A* 算法'), html);
+});
+
+test('inlineMd：转义星号 \\* 显示为字面星号', () => {
+  const html = inlineMd('字面 \\* 星号。');
+  assert.ok(html.includes('字面 * 星号'), html);
 });
 
 console.log(`\n${passed} tests passed`);

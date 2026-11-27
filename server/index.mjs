@@ -10,6 +10,10 @@ import { fileURLToPath } from 'node:url';
 
 import { DATA_DIR, loadConfig, publicConfig, saveConfig, unlockConfig, PRESETS } from './shared/config.mjs';
 import { streamChat, completeChat, extractJson, testConnection, LlmError } from './shared/llm.mjs';
+import { estimateCost } from './shared/pricing.mjs';
+import { formatTokens } from './shared/usage.mjs';
+import { parseOutlineRules, outlineSummary } from './paper/outline.mjs';
+import { enrichStructureWithOutline } from './paper/anchors.mjs';
 import { HttpError, sendJson, readBody, openSse, sleep, serveStatic } from './shared/http.mjs';
 import { handleKgApi } from './kg/routes.mjs';
 import { handlePaperApi } from './paper/routes.mjs';
@@ -98,6 +102,25 @@ function paperOf(body) {
   return { title: String(paper.title || '').trim(), text };
 }
 
+/**
+ * usage + 费用 → 前端展示对象。
+ * 拿不到 usage 时返回 null；单价缺失时 cost=null（前端显示"未配置单价"）。
+ */
+function usagePayload(cfg, usage, at) {
+  if (!usage) return null;
+  const overrides = cfg?.pricing && typeof cfg.pricing === 'object' ? cfg.pricing : {};
+  return {
+    prompt: usage.prompt,
+    completion: usage.completion,
+    cached: usage.cached,
+    total: usage.total,
+    cost: estimateCost(usage, cfg?.provider, cfg?.model, { overrides, at }),
+    currency: 'CNY',
+    estimated: true,
+    label: formatTokens(usage.total),
+  };
+}
+
 function requirePaper(paper) {
   if (!paper.text) throw new HttpError(400, '没有论文内容，请先粘贴正文或上传文件');
   if (paper.text.length < 60) throw new HttpError(400, '论文内容太短，至少需要 60 个字符才能精读');
@@ -127,6 +150,8 @@ async function handleAnalyze(req, res) {
     const messages = readingMessages(paper.text, { title: paper.title });
     let thinkingChars = 0;
     let lastPush = 0;
+    let usage = null;
+    const startedAt = Date.now();
 
     for await (const chunk of streamChat(cfg, messages, { signal: controller.signal })) {
       if (chunk.channel === 'reasoning') {
@@ -143,14 +168,17 @@ async function handleAnalyze(req, res) {
         if (!sse.event('delta', { text: chunk.text })) break;
         continue;
       }
-      if (chunk.channel === 'end' && chunk.finishReason === 'length') {
-        sse.event('notice', {
-          code: 'truncated',
-          message: '输出达到 max_tokens 上限，精读可能被截断，可在「模型设置」里调大 max_tokens',
-        });
+      if (chunk.channel === 'end') {
+        if (chunk.usage) usage = chunk.usage;
+        if (chunk.finishReason === 'length') {
+          sse.event('notice', {
+            code: 'truncated',
+            message: '输出达到 max_tokens 上限，精读可能被截断，可在「模型设置」里调大 max_tokens',
+          });
+        }
       }
     }
-    sse.event('done', { mode: 'live' });
+    sse.event('done', { mode: 'live', usage: usagePayload(cfg, usage, startedAt) });
   } catch (err) {
     sse.event('error', { message: err.message || '精读失败' });
   } finally {
@@ -166,22 +194,39 @@ async function handleStructure(req, res) {
   const cfg = loadConfig();
   if (!cfg.api_key || body.demo === true) {
     await sleep(120);
-    return sendJson(res, 200, { ok: true, demo: true, data: DEMO_STRUCTURE });
+    const demoOutline = parseOutlineRules(paper.text);
+    const demoData = JSON.parse(JSON.stringify(DEMO_STRUCTURE));
+    enrichStructureWithOutline(demoData, demoOutline, paper.text);
+    return sendJson(res, 200, { ok: true, demo: true, data: demoData, outline: demoOutline });
   }
 
   try {
-    const messages = structureMessages(paper.text, String(body.reading || ''), { title: paper.title });
+    // 用规则层解析章节（零成本），供提示词引用与 anchors 定位；不调 LLM
+    const outline = parseOutlineRules(paper.text);
+    const messages = structureMessages(paper.text, String(body.reading || ''), {
+      title: paper.title,
+      sections: outlineSummary(outline),
+    });
     // 模型偶尔会吐坏 JSON 或网络抖动，自动重试一次
     let failure = { message: '结构化抽取失败' };
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const { content, finishReason } = await completeChat(cfg, messages, {
+        const startedAt = Date.now();
+        const { content, finishReason, usage } = await completeChat(cfg, messages, {
           maxTokens: cfg.max_tokens,
           temperature: 0.2,
         });
         const data = extractJson(content);
         if (data && typeof data === 'object') {
-          return sendJson(res, 200, { ok: true, data: normalizeStructure(data) });
+          const normalized = normalizeStructure(data);
+          // 用 outline 坐标系补 concept anchors 与节点 sectionRef
+          enrichStructureWithOutline(normalized, outline, paper.text);
+          return sendJson(res, 200, {
+            ok: true,
+            data: normalized,
+            outline,
+            usage: usagePayload(cfg, usage, startedAt),
+          });
         }
         failure =
           finishReason === 'length'
@@ -227,6 +272,7 @@ function normalizeStructure(data) {
           label: String(n.label || n.name || `节点 ${i + 1}`),
           detail: String(n.detail || n.description || ''),
           kind: ['input', 'process', 'data', 'output'].includes(String(n.kind)) ? String(n.kind) : 'process',
+          sectionRef: String(n.sectionRef ?? n.section ?? ''),
         }))
         .slice(0, 14)
     : [];
@@ -396,11 +442,14 @@ async function handleAsk(req, res) {
       structure: body.structure && typeof body.structure === 'object' ? body.structure : null,
       question,
       askThread: Array.isArray(body.askThread) ? body.askThread : [],
+      outline: body.outline && typeof body.outline === 'object' ? body.outline : null,
     });
     const messages = askMessages(context.block, { question, webSearch: Boolean(tools) });
 
     let thinkingChars = 0;
     let lastPush = 0;
+    let usage = null;
+    const startedAt = Date.now();
     for await (const chunk of streamChat(cfg, messages, { signal: controller.signal, tools })) {
       if (chunk.channel === 'reasoning') {
         thinkingChars += chunk.text.length;
@@ -411,9 +460,13 @@ async function handleAsk(req, res) {
         }
         continue;
       }
+      if (chunk.channel === 'end') {
+        if (chunk.usage) usage = chunk.usage;
+        continue;
+      }
       if (chunk.channel === 'content' && !sse.event('delta', { text: chunk.text })) break;
     }
-    sse.event('done', {});
+    sse.event('done', { usage: usagePayload(cfg, usage, startedAt) });
   } catch (err) {
     sse.event('error', { message: err.message || '追问失败' });
   } finally {

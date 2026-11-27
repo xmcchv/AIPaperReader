@@ -18,6 +18,101 @@ const ASSETS_CDN = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.8.69/';
 const CAPTION_RE = /^(figure|table|algorithm|listing)\s*\d+\s*[:.]/i;
 const MATH_RE = /[√∫∑∏≈≤≥≠]/;
 const MIN_SCALE = 0.45;
+
+/**
+ * 把术语在段落文本里的命中位置，近似映射到 PDF 上「一行」的横向区间。
+ *
+ * para 的 rects 是段落整体的包围盒（一个 rect 可能跨多行），直接拿它当高亮框
+ * 会画出一条贯穿整段的竖条——所以必须按行高 fh 把它切成行，只高亮命中那一行。
+ * 做法：先按各 rect 的宽度比例把文本字符分摊到 rect，再在 rect 内按行高切行，
+ * 用「每行字符数」估算术语落在第几行、行内横向位置。
+ *
+ * @returns {{page:number,x0:number,y0:number,x1:number,y1:number}|null}
+ */
+export function termRectFor(para, pattern) {
+  const text = String(para?.text || '');
+  const rects = Array.isArray(para?.rects) ? para.rects : [];
+  if (!text || !rects.length) return null;
+  const m = pattern.exec(text);
+  if (!m) return null;
+
+  const fh = Math.max(6, Number(para.fh || para.lastFh) || 12);
+  const widths = rects.map((r) => Math.max(1, r.x1 - r.x0));
+  const totalWidth = widths.reduce((a, b) => a + b, 0);
+
+  // 第 1 步：命中落在哪个 rect（按宽度比例分摊字符）
+  let acc = 0;
+  let idx = rects.length - 1;
+  for (let i = 0; i < rects.length; i += 1) {
+    const share = (widths[i] / totalWidth) * text.length;
+    if (m.index < acc + share) { idx = i; break; }
+    acc += share;
+  }
+  const rect = rects[idx];
+
+  // 第 2 步：该 rect 内按行高切行，估算命中在第几行
+  const rectHeight = Math.max(fh, rect.y1 - rect.y0);
+  const lineCount = Math.max(1, Math.round(rectHeight / fh));
+  const rectChars = Math.max(1, Math.round((widths[idx] / totalWidth) * text.length));
+  const charsPerLine = Math.max(1, rectChars / lineCount);
+  const withinRect = m.index - acc;
+  const lineIdx = Math.max(0, Math.min(lineCount - 1, Math.floor(withinRect / charsPerLine)));
+
+  // 第 3 步：行内横向位置（用该行起始字符偏移）
+  const lineStart = lineIdx * charsPerLine;
+  const withinLine = Math.max(0, Math.min(1, (withinRect - lineStart) / charsPerLine));
+  const span = Math.max(0.03, Math.min(1 - withinLine, m[0].length / charsPerLine));
+  const lineWidth = rect.x1 - rect.x0;
+  // 行高方向：第一行贴 rect.y0，后续按 fh 递进；只取一行高度，不再贯穿整段
+  const y0 = rect.y0 + lineIdx * fh;
+
+  return {
+    page: rect.page,
+    x0: rect.x0 + lineWidth * withinLine,
+    x1: rect.x0 + lineWidth * (withinLine + span),
+    y0,
+    y1: Math.min(rect.y1, y0 + fh),
+  };
+}
+/** 标题归一化：去编号前缀、折叠空白、去尾部句点，便于章节标题 ↔ PDF heading 段匹配 */
+export function normalizeHeading(text) {
+  const s = String(text || '').trim();
+  // 剥掉章节编号：阿拉伯数字（1 / 2.1）后需句点或空格；罗马数字（I / VII）后需句点。
+  // "3D Sliding" 的 "3D" 紧跟字母，不是编号，保留。
+  const stripped = s
+    .replace(/^\d{1,2}(?:\.\d{1,2})*\.?\s+(?=[A-Z\u4e00-\u9fff])/, '')
+    .replace(/^[IVXLCDM]{1,5}\.\s+(?=\S)/, '');
+  return stripped.replace(/\s+/g, ' ').replace(/[.．:：]+$/, '').toLowerCase();
+}
+
+/** 章节 → PDF heading 段的匹配分：编号一致加权，标题包含/相等加权 */
+export function headingMatchScore(para, number, title) {
+  const raw = String(para?.text || '').trim();
+  if (!raw || raw.length > 90) return -1;
+  // 标题文本要像标题：短、以编号开头或以关键词开头。不能只依赖 para.heading——
+  // 很多 PDF 的章节标题块被抽成 kind=body（实测 SCAN-Planner 只有结论节是 heading）。
+  const numbered = /^([\dIVXLCDM]{1,5}(?:\.\d{1,2})*)\.\s+\S/.test(raw) || /^\d{1,2}(?:\.\d{1,2})*\.?\s+[A-Z\u4e00-\u9fff]/.test(raw);
+  const keyword = /^(abstract|摘要|introduction|引言|related work|method|实验|experiment|conclusion|结论|discussion|references)/i.test(raw);
+  if (!numbered && !keyword && !para?.heading && para?.kind !== 'heading') return -1;
+
+  const norm = normalizeHeading(raw);
+  const wantTitle = normalizeHeading(title);
+  if (!norm) return -1;
+  let score = 0;
+  if (wantTitle) {
+    if (norm === wantTitle) score += 10;
+    else if (norm.includes(wantTitle) || wantTitle.includes(norm)) score += 5;
+  }
+  const num = String(number || '').trim().replace(/\.+$/, '').toLowerCase();
+  if (num) {
+    const prefix = raw.match(/^([\dIVXLCDM]{1,5}(?:\.\d{1,2})*)\.?\s/);
+    if (prefix && prefix[1].toLowerCase() === num) score += 8;
+  }
+  // 纯标题（编号 + 短标题）比正文里顺带提到的段落优先
+  if (numbered && raw.split(/\s+/).length <= 8) score += 2;
+  return score;
+}
+
 const MAX_SCALE = 3;
 
 let pdfjsPromise = null;
@@ -783,6 +878,22 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
     return node;
   };
 
+  /** 在 PDF 页面上画一个近似覆盖术语的矩形（词级高亮），2 秒后淡出 */
+  function flashTermRect(para, pattern) {
+    const rect = termRectFor(para, pattern);
+    if (!rect) return;
+    const page = host.querySelector(`.pdf-page[data-page="${rect.page}"]`);
+    if (!page) return;
+    host.querySelectorAll('.pdf-term-highlight').forEach((n) => n.remove());
+    const mark = el('div', 'pdf-term-highlight');
+    mark.style.left = `${rect.x0 * state.scale}px`;
+    mark.style.top = `${rect.y0 * state.scale}px`;
+    mark.style.width = `${Math.max(6, (rect.x1 - rect.x0) * state.scale)}px`;
+    mark.style.height = `${Math.max(8, (rect.y1 - rect.y0) * state.scale)}px`;
+    page.appendChild(mark);
+    setTimeout(() => mark.remove(), 2400);
+  }
+
   function clearCard() {
     host.querySelectorAll('.pdf-card').forEach((n) => n.remove());
     state.activePara = null;
@@ -893,6 +1004,7 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
       if (token !== state.renderToken) return;
       const viewport = pageData.proxy.getViewport({ scale: state.scale });
       const pageEl = el('div', 'pdf-page');
+      pageEl.dataset.page = String(pageData.index);
       pageEl.style.width = `${Math.floor(viewport.width)}px`;
       pageEl.style.height = `${Math.floor(viewport.height)}px`;
 
@@ -1118,10 +1230,34 @@ export function createPdfView(host, { onAsk, onNotice } = {}) {
         node.scrollIntoView({ block: 'center', behavior: 'smooth' });
         node.classList.add('flash');
         setTimeout(() => node.classList.remove('flash'), 1800);
+        flashTermRect(para, pattern);
         showCard(para, node);
         return true;
       }
       return false;
+    },
+
+    /**
+     * 章节定位：只在 heading 段里匹配章节号/标题，滚到该标题热区并闪烁。
+     * 不弹卡片（区别于 locate），供目录/章节地图跳 PDF 使用。
+     * @returns {{page:number, id:string}|null} 是否命中及页码（0-based）
+     */
+    locateSection(number, title) {
+      if (!state.paras.length) return null;
+      let best = null;
+      let bestScore = 0;
+      for (const para of state.paras) {
+        const score = headingMatchScore(para, number, title);
+        if (score > bestScore) { best = para; bestScore = score; }
+      }
+      if (!best || bestScore < 8) return null;
+      const node = host.querySelector(`.pdf-para[data-pid="${best.id}"]`);
+      if (!node) return null;
+      node.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      node.classList.add('flash');
+      setTimeout(() => node.classList.remove('flash'), 1800);
+      const page = best.rects?.[0]?.page ?? best.page ?? 0;
+      return { page, id: best.id };
     },
 
     destroy() {

@@ -351,7 +351,7 @@ input:focus {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 14px 16px;
+  padding: 10px 14px;
   box-shadow: var(--shadow-sm);
   transition: border-color 0.16s var(--ease), box-shadow 0.16s var(--ease);
 }
@@ -742,7 +742,7 @@ input:focus {
 }
 
 .reading-list .card + .card {
-  margin-top: 10px;
+  margin-top: 4px;
 }
 
 /* 追问框 */
@@ -1121,4 +1121,314 @@ html[data-theme='dark'] .ask-cite.web {
   padding: 0;
   background: transparent;
   border: 0;
+}
+
+/* 追问回答下方的用量行 */
+.ask-usage {
+  margin-top: 5px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--line);
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  cursor: help;
+}
+
+/* 单轮追问徽标：问题气泡左侧 ⋯，点开菜单只删这一轮问答 */
+.ask-item.q {
+  position: relative;
+  max-width: calc(92% - 26px);
+}
+
+.ask-turn-badge {
+  position: absolute;
+  left: -23px;
+  top: 6px;
+  z-index: 3;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ask-turn-menu {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+  cursor: pointer;
+  opacity: 0.8;
+  transition: opacity 0.16s var(--ease), color 0.16s var(--ease), border-color 0.16s var(--ease);
+}
+
+.ask-item.q:hover .ask-turn-menu,
+.ask-turn-menu:focus-visible,
+.ask-turn-badge.open .ask-turn-menu {
+  opacity: 1;
+}
+
+.ask-turn-badge.open .ask-turn-menu {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+}
+
+.ask-turn-popover {
+  position: absolute;
+  left: 0;
+  top: 22px;
+  z-index: 12;
+  padding: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--ui-radius-sm, 8px);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+}
+
+.ask-turn-popover[hidden] {
+  display: none;
+}
+
+.ask-turn-delete {
+  display: block;
+  width: 100%;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--danger);
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ask-turn-delete:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+/* 当前论文累计用量徽标 */
+.total-usage {
+  flex: none;
+  padding: 2px 7px;
+  font-size: 10.5px;
+  line-height: 16px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 999px;
+  cursor: help;
+  white-space: nowrap;
+}
+
+/* 精读小节对应的论文章节标注 */
+.reading-section-ref {
+  margin-left: 8px;
+  padding: 1px 6px;
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  vertical-align: middle;
+  cursor: help;
+}
+
+/* ---------- 侧栏：历史 / 目录 Tab ---------- */
+#sidebar .side-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 10px;
+}
+
+#sidebar .side-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+#sidebar .side-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-3, var(--muted));
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease);
+}
+
+#sidebar .side-tab:hover { background: var(--panel-2); color: var(--text); }
+
+#sidebar .side-tab.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+#sidebar .side-tab .side-count {
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--ink-3, var(--muted));
+}
+
+#sidebar .side-tab.active .side-count { background: var(--accent); color: var(--bg, #fff); }
+
+#sidebar .side-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#sidebar .side-panel[hidden] { display: none; }
+
+/* ---------- 侧栏目录树 ---------- */
+#sidebar .side-outline {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 6px 6px 10px;
+  scrollbar-width: thin;
+}
+
+#sidebar .side-outline-empty {
+  padding: 28px 14px;
+  text-align: center;
+  color: var(--ink-3, var(--muted));
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+#sidebar .tree-group { margin-bottom: 2px; }
+
+#sidebar .tree-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+#sidebar .tree-item {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 7px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s var(--ease), color 0.12s var(--ease);
+}
+
+#sidebar .tree-item:hover { background: var(--panel-2); }
+
+#sidebar .tree-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+#sidebar .tree-item .tree-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#sidebar .tree-num {
+  flex: none;
+  color: var(--ink-3, var(--muted));
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+#sidebar .tree-item.active .tree-num { color: var(--accent); }
+
+#sidebar .tree-arrow {
+  flex: none;
+  width: 16px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--ink-3, var(--muted));
+  font-size: 10px;
+  cursor: pointer;
+  transition: transform 0.15s var(--ease), color 0.15s var(--ease);
+}
+
+#sidebar .tree-arrow:hover { color: var(--accent); }
+#sidebar .tree-arrow.open { transform: rotate(90deg); color: var(--accent); }
+#sidebar .tree-arrow.placeholder { cursor: default; }
+
+#sidebar .tree-children {
+  margin: 1px 0 5px 22px;
+  border-left: 1px solid var(--line-soft, var(--panel-2));
+  padding-left: 4px;
+}
+
+#sidebar .tree-item.child {
+  font-size: 11.5px;
+  padding: 5px 7px 5px 4px;
+  color: var(--ink-2, var(--muted));
+}
+
+#sidebar .side-outline-count {
+  font-size: 11px;
+  color: var(--ink-3, var(--muted));
+}
+
+/* 精读用量条：移到精读要点下方，不占顶栏宽度、避免顶栏换行 */
+.reading-usage-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* 紧贴精读要点末尾，不再单独占一条带边框的区域 */
+  padding: 4px 16px 4px;
+  border-top: none;
+  background: transparent;
+  min-height: 0;
+}
+
+.reading-usage-bar .pane-meta {
+  font-size: 11px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.reading-usage-bar .total-usage {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+/* 顶栏在窄宽度下不换行：标题 + 按钮优先，多余信息已移走 */
+.pane[data-pane='reading'] .pane-head,
+.pane[data-pane='diagram'] .pane-head {
+  flex-wrap: nowrap;
+}
+
+/* 精读列表内边距收口：上 12 / 右 12 / 下 5 / 左 12（覆盖前面的 22px） */
+.reading-list {
+  padding: 12px 12px 5px;
 }

@@ -6,12 +6,33 @@
 export const escapeHtml = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-/** 极简内联 markdown：**粗体**、*斜体*、`code`（输入已转义） */
+/**
+ * 极简内联 markdown：**粗体**、*斜体*、`code`。
+ * 难点：A* / RRT* / Theta* / D* Lite 这类算法名里的星号不是强调标记，
+ * 直接 replace 会把 A* … A* 配成一对斜体，把星号吃掉。
+ * 策略：先把行内 code、转义星号、算法名星号换成占位符，再处理粗体/斜体，最后还原。
+ */
 export function inlineMd(text) {
-  return escapeHtml(text)
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  const escaped = escapeHtml(String(text ?? ''));
+  const holds = [];
+  const hold = (html) => {
+    const key = `\u0000${holds.length}\u0000`;
+    holds.push(html);
+    return key;
+  };
+
+  let out = escaped.replace(/`([^`]+)`/g, (_, code) => hold(`<code>${code}</code>`));
+  // 转义的 \* 是字面星号
+  out = out.replace(/\\\*/g, () => hold('*'));
+  // 算法名 + 粗体结束连写：RRT*** = RRT* + **（后接标点或行尾）
+  out = out.replace(/([A-Za-z])\*\*\*(?=$|[，。、：；）\s])/g, (_, ch) => `${ch}${hold('*')}**`);
+  // 算法名星号：字母后跟单个 *（A* / RRT* / D* Lite），保护起来
+  out = out.replace(/([A-Za-z])\*(?![A-Za-z*])/g, (_, ch) => `${ch}${hold('*')}`);
+
+  out = out.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  out = out.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+
+  return out.replace(/\u0000(\d+)\u0000/g, (_, i) => holds[Number(i)] ?? '');
 }
 
 /**
@@ -29,8 +50,13 @@ export function markAskCitations(html) {
 // 章节标题识别。中文标题后面没有 \b 边界（\w 不含中文），所以关键字分支用显式后向断言；
 // 数字编号分支要求「编号 1-2 位 + 大写字母或中文」，避免把「1 512 512」表格行、
 // 「2015 classification」年份开头的正文、脚注行当成标题
-const SECTION_RE =
-  /^(?:\d{1,2}(?:\.\d{1,2})*\s*\.?\s+[A-Z\u4e00-\u9fff]|(?:摘要|abstract|引言|introduction|相关工作|related work|方法|methodology|method|实验|experiments?|结果|results|讨论|discussion|结论|conclusions?|局限|limitations?|参考文献|references)(?=$|[\s:：、.．,，)）]))/i;
+// 编号支持阿拉伯数字(1 / 2.1)与罗马数字(I / II / IV)，学术论文常见罗马数字章节
+const ROMAN = 'IVXLCDM';
+const SECTION_RE = new RegExp(
+  `^(?:(?:\\d{1,2}(?:\\.\\d{1,2})*\\.?|[${ROMAN}]{1,5}\\.|[A-Z]\\.)\\s+[A-Z\\u4e00-\\u9fff]` +
+    `|(?:摘要|abstract|引言|introduction|相关工作|related work|方法|methodology|method|实验|experiments?|结果|results|讨论|discussion|结论|conclusions?|局限|limitations?|参考文献|references)(?=$|[\\s:：、.．,，)）—–-]))`,
+  'i',
+);
 
 /** 判断某一段是否是章节标题（用于原文区的视觉分层） */
 export function isSectionTitle(para) {
@@ -38,8 +64,11 @@ export function isSectionTitle(para) {
   if (!SECTION_RE.test(para) && !/^[一二三四五六七八九十]+[、.]/.test(para)) return false;
   // SECTION_RE 带 i 标志，表格行（"18 layers 27.94"）和 "method error" 之类也会命中，这里收紧：
   // 编号标题后面必须紧跟大写字母或中文；非编号标题必须以大写字母或中文开头
+  const romanNum = /^[IVXLCDM]{1,5}\.\s/;
   if (/^\d/.test(para)) {
     if (!/^\d{1,2}(?:\.\d{1,2})*\.?\s*[A-Z\u4e00-\u9fff]/.test(para)) return false;
+  } else if (romanNum.test(para)) {
+    if (!new RegExp(`^[${ROMAN}]{1,5}\\.\\s+(?:[A-Z\\u4e00-\\u9fff]|\\d)`).test(para)) return false;
   } else if (!/^[\u4e00-\u9fff]/.test(para) && !/^[A-Z]/.test(para)) {
     return false;
   }

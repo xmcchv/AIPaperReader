@@ -3,6 +3,7 @@
  *   /api/paper/library   列表（侧栏）
  *   /api/paper/get       单篇全量（含分块 / 译文）
  *   /api/paper/save      新建 / 更新（正文、精读、结构化、追问）
+ *   /api/paper/outline   章节结构解析（规则 + LLM 整理，按需调用并缓存）
  *   /api/paper/open      打开 PDF：按 pdf_hash 去重，命中复用，未命中新建
  *   /api/paper/pdf       GET 下载 / PUT 原始字节 / POST base64（兼容旧前端）
  *   /api/paper/blocks    写分块（翻译页抽块后回写，精读页消费同一份）
@@ -11,6 +12,9 @@
  * 与 /api/paper/fetch（arXiv 抓取）区分：这里只管理已保存的论文。
  */
 import { HttpError, readBody, readBuffer, sendJson, serveFile } from '../shared/http.mjs';
+import { loadConfig } from '../shared/config.mjs';
+import { parseOutline } from './outline.mjs';
+import { enrichStructureWithOutline } from './anchors.mjs';
 import {
   deletePaper,
   ensurePaper,
@@ -54,6 +58,49 @@ export async function handlePaperApi(req, res, url) {
     const body = await readBody(req);
     const paper = savePaper(body.paper || body);
     sendJson(res, 200, { ok: true, paper });
+    return true;
+  }
+
+  /** 章节结构：按需解析（会调一次模型做整理），结果存进论文记录，之后直接读缓存 */
+  if (method === 'POST' && pathname === '/api/paper/outline') {
+    const body = await readBody(req);
+    const id = String(body.id || '');
+    const paper = id ? getPaper(id) : null;
+    const text = String(body.text || paper?.text || '');
+    if (!text.trim()) throw new HttpError(400, '没有可解析的论文正文');
+    if (paper?.outline && !body.force) {
+      sendJson(res, 200, { ok: true, outline: paper.outline, cached: true });
+      return true;
+    }
+    const outline = await parseOutline(loadConfig(), text, { demo: body.demo === true });
+    if (paper) savePaper({ id, outline });
+    sendJson(res, 200, { ok: true, outline, cached: false });
+    return true;
+  }
+
+  /**
+   * 补算 concept anchors：老论文在 anchors 功能之前保存，concepts 没有 anchors，
+   * 导致概念定位退化成「从正文开头找词」而跳到摘要。这里用现有 outline + 正文补算并回写。
+   */
+  if (method === 'POST' && pathname === '/api/paper/anchors') {
+    const body = await readBody(req);
+    const id = String(body.id || '');
+    const paper = id ? getPaper(id) : null;
+    if (!paper) throw new HttpError(404, '论文不存在');
+    const outline = paper.outline || (body.outline && typeof body.outline === 'object' ? body.outline : null);
+    const structure = paper.structure || (body.structure && typeof body.structure === 'object' ? body.structure : null);
+    if (!structure) throw new HttpError(400, '还没有结构化结果，先生成精读');
+    if (!outline?.sections?.length || !String(paper.text || '').trim()) {
+      throw new HttpError(400, '缺少章节结构或正文，无法补算 anchors');
+    }
+    const hasAnchors = (structure.concepts || []).every((c) => Array.isArray(c.anchors));
+    if (hasAnchors && !body.force) {
+      sendJson(res, 200, { ok: true, structure, cached: true });
+      return true;
+    }
+    const enriched = enrichStructureWithOutline(JSON.parse(JSON.stringify(structure)), outline, paper.text);
+    savePaper({ id, structure: enriched });
+    sendJson(res, 200, { ok: true, structure: enriched, cached: false });
     return true;
   }
 
