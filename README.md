@@ -328,7 +328,7 @@ npm run desktop:build   # 生成未打包目录 release/win-unpacked（当前平
 npm run desktop:dist    # 生成安装包：Windows NSIS/portable、macOS dmg、Linux AppImage
 ```
 
-三平台需要分别在对应系统上构建，产物在 `release/`（已 gitignore）。Windows 会生成 `PaperLens Setup 2.1.0.exe`（安装包）与 `PaperLens 2.1.0.exe`（免安装便携版）。Electron 只是 `devDependencies`，普通命令行 `node server/index.mjs` 仍然可用，服务端依旧零运行时依赖。
+三平台需要分别在对应系统上构建，产物在 `release/`（已 gitignore）。Windows 会生成 `PaperLens Setup 2.2.1.exe`（安装包）与 `PaperLens 2.2.1.exe`（免安装便携版）。Electron 只是 `devDependencies`，普通命令行 `node server/index.mjs` 仍然可用，服务端依旧零运行时依赖。
 
 构建脚本默认使用 npmmirror 镜像并让 Node 使用系统根证书，用来绕过部分网络环境下访问 GitHub 时的 `unable to verify the first certificate`。如果仍然失败：
 
@@ -345,14 +345,14 @@ PAPERLENS_INSECURE_TLS=1 npm run desktop:dist
 推送 `v*` tag 会自动构建 Windows / macOS / Linux 三平台安装包，并发布到 GitHub Releases：
 
 ```bash
-git tag v2.1.0
-git push origin v2.1.0
+git tag v2.2.1
+git push origin v2.2.1
 ```
 
 - 构建前会校验 tag 与 `package.json` 的 `version` 一致
-- Windows：`PaperLens Setup 2.1.0.exe` + `PaperLens 2.1.0.exe`
-- macOS：`PaperLens-2.1.0*.dmg`（未签名，首次打开需右键「打开」）
-- Linux：`PaperLens-2.1.0*.AppImage`
+- Windows：`PaperLens Setup 2.2.1.exe` + `PaperLens 2.2.1.exe`
+- macOS：`PaperLens-2.2.1*.dmg`（未签名，首次打开需右键「打开」）
+- Linux：`PaperLens-2.2.1*.AppImage`
 - 手动触发 `Desktop build` 只上传 artifacts，不创建 Release
 
 ## 持续集成

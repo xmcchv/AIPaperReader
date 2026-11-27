@@ -1,6 +1,6 @@
 {
   "name": "paperlens",
-  "version": "2.1.0",
+  "version": "2.2.1",
   "private": true,
   "type": "module",
   "description": "PaperLens - 论文精读 + 知识图谱：单页切换原文/精读/图解与概念图谱，本地论文库，可配置任意 OpenAI 兼容模型 API",
