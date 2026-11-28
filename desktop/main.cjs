@@ -19,6 +19,18 @@ const DEFAULT_PORT = 5173;
 const PORT_RANGE = 30;
 const APP_ROOT = path.resolve(__dirname, '..');
 const SERVER_ENTRY = path.join(APP_ROOT, 'server', 'index.mjs');
+const APP_NAME = 'PaperLens';
+const REPO_URL = 'https://github.com/xmcchv/AIPaperReader';
+
+// 版本号与图标都复用仓库现有资源：package.json 的 version、assets/ 下的品牌图标
+const APP_VERSION = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(APP_ROOT, 'package.json'), 'utf8')).version;
+  } catch {
+    return '0.0.0';
+  }
+})();
+const ICON_FILE = path.join(APP_ROOT, 'assets', 'icon.png');
 
 let mainWindow = null;
 let serverProcess = null;
@@ -43,6 +55,23 @@ function publicState() {
     logs: state.logs.slice(-120),
     url: `http://${HOST}:${state.port}/`,
     dataDir: dataDir(),
+  };
+}
+
+function appInfo() {
+  const readme = path.join(APP_ROOT, 'README.md');
+  return {
+    name: APP_NAME,
+    version: APP_VERSION,
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    node: process.versions.node,
+    platform: `${process.platform} ${process.arch}`,
+    appRoot: APP_ROOT,
+    dataDir: dataDir(),
+    portRange: `${DEFAULT_PORT}–${DEFAULT_PORT + PORT_RANGE - 1}`,
+    repoUrl: REPO_URL,
+    hasReadme: fs.existsSync(readme),
   };
 }
 
@@ -211,7 +240,8 @@ function createWindow() {
     height: 620,
     minWidth: 680,
     minHeight: 520,
-    title: 'PaperLens 启动器',
+    title: `${APP_NAME} v${APP_VERSION} 启动器`,
+    icon: ICON_FILE,
     backgroundColor: '#0b0f16',
     autoHideMenuBar: true,
     show: false,
@@ -231,9 +261,17 @@ function createWindow() {
 
 function registerIpc() {
   ipcMain.handle('launcher:get-state', () => publicState());
+  ipcMain.handle('launcher:get-info', () => appInfo());
   ipcMain.handle('launcher:start', () => startServer());
   ipcMain.handle('launcher:stop', () => stopServer());
   ipcMain.handle('launcher:open', () => openPage());
+  ipcMain.handle('launcher:open-repo', async () => {
+    await shell.openExternal(REPO_URL);
+  });
+  ipcMain.handle('launcher:open-readme', async () => {
+    const readme = path.join(APP_ROOT, 'README.md');
+    if (fs.existsSync(readme)) await shell.openPath(readme);
+  });
   ipcMain.handle('launcher:open-data', async () => {
     fs.mkdirSync(dataDir(), { recursive: true });
     await shell.openPath(dataDir());
@@ -253,6 +291,8 @@ if (!gotLock) {
   });
 
   app.whenReady().then(() => {
+    // Windows 任务栏/开始菜单用同一套图标与 AppUserModelID
+    app.setAppUserModelId('com.paperlens.app');
     registerIpc();
     createWindow();
     // 双击即用：启动器打开时自动拉起服务，启动成功后自动打开默认浏览器

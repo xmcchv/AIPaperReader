@@ -8,6 +8,7 @@ const LABELS = {
 };
 
 let state = null;
+let info = null;
 
 function render(next) {
   if (!next) return;
@@ -33,11 +34,47 @@ function render(next) {
   $('#btn-start').disabled = running || busy;
   $('#btn-stop').disabled = !running || !next.owned;
   $('#btn-open').disabled = !running;
+  $('#btn-info-open').disabled = !running;
   $('#data-dir').textContent = next.dataDir;
 
   const log = $('#log');
   log.textContent = (next.logs || []).join('\n');
   log.scrollTop = log.scrollHeight;
+}
+
+function renderInfo(data) {
+  if (!data) return;
+  info = data;
+  const ver = `v${data.version}`;
+
+  // 标题附带版本号
+  document.title = `${data.name} ${ver} 启动器`;
+  $('#brand-version').textContent = ver;
+  $('#info-version').textContent = ver;
+
+  $('#i-version').textContent = ver;
+  $('#i-electron').textContent = data.electron || '—';
+  $('#i-chrome').textContent = data.chrome || '—';
+  $('#i-node').textContent = data.node || '—';
+  $('#i-platform').textContent = data.platform || '—';
+  $('#i-portrange').textContent = data.portRange || '—';
+  $('#i-datadir').textContent = data.dataDir || '—';
+  $('#i-approot').textContent = data.appRoot || '—';
+  $('#i-approot').title = data.appRoot || '';
+
+  // 打包后没有 README，隐藏该入口
+  const readmeBtn = $('#btn-readme');
+  if (readmeBtn) readmeBtn.hidden = !data.hasReadme;
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((tab) => {
+    const active = tab.dataset.tab === name;
+    tab.classList.toggle('is-active', active);
+    tab.setAttribute('aria-selected', String(active));
+  });
+  $('#page-launcher').hidden = name !== 'launcher';
+  $('#page-info').hidden = name !== 'info';
 }
 
 async function call(action) {
@@ -49,13 +86,30 @@ async function call(action) {
   }
 }
 
+async function callVoid(action) {
+  try {
+    await action();
+  } catch (err) {
+    $('#message').textContent = err.message || String(err);
+  }
+}
+
 window.launcher.onState(render);
 window.launcher.getState().then(render);
+window.launcher.getInfo().then(renderInfo).catch(() => {});
+
+document.querySelectorAll('.tab').forEach((tab) => {
+  tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+});
 
 $('#btn-start').addEventListener('click', () => call(() => window.launcher.start()));
 $('#btn-stop').addEventListener('click', () => call(() => window.launcher.stop()));
 $('#btn-open').addEventListener('click', () => call(() => window.launcher.open()));
 $('#btn-open-data').addEventListener('click', () => call(() => window.launcher.openData()));
+$('#btn-info-data').addEventListener('click', () => call(() => window.launcher.openData()));
+$('#btn-info-open').addEventListener('click', () => call(() => window.launcher.open()));
+$('#btn-repo').addEventListener('click', () => callVoid(() => window.launcher.openRepo()));
+$('#btn-readme').addEventListener('click', () => callVoid(() => window.launcher.openReadme()));
 $('#btn-clear-log').addEventListener('click', () => {
   $('#log').textContent = '';
   if (state) state.logs = [];

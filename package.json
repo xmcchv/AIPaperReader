@@ -41,10 +41,12 @@
       "server/**/*",
       "public/**/*",
       "tools/**/*",
+      "assets/**/*",
       "package.json"
     ],
     "win": {
-      "signAndEditExecutable": false,
+      "signAndEditExecutable": true,
+      "icon": "assets/icon.ico",
       "target": ["nsis", "portable"]
     },
     "mac": {
@@ -52,6 +54,7 @@
       "category": "public.app-category.productivity"
     },
     "linux": {
+      "icon": "assets/icon.png",
       "target": ["AppImage"],
       "category": "Office"
     }

@@ -319,6 +319,8 @@ npm run desktop
 - 没有就拉起服务（使用 Electron 自带的 Node，**不需要系统预装 Node**）；
 - 启动成功后自动打开默认浏览器；
 - 窗口里显示运行状态、端口、数据目录和日志；
+- 窗口标题带版本号（如 `PaperLens v2.2.1 启动器`），窗口/任务栏图标复用 `assets/icon.png`；
+- 「信息」页介绍三个视图、运行环境（Electron / Chromium / Node / 平台）、数据目录与隐私说明，并提供项目主页与 README 入口；
 - 点「停止」或关闭窗口，会停止由启动器启动的服务。
 
 打包：
@@ -329,6 +331,8 @@ npm run desktop:dist    # 生成安装包：Windows NSIS/portable、macOS dmg、
 ```
 
 三平台需要分别在对应系统上构建，产物在 `release/`（已 gitignore）。Windows 会生成 `PaperLens Setup 2.2.1.exe`（安装包）与 `PaperLens 2.2.1.exe`（免安装便携版）。Electron 只是 `devDependencies`，普通命令行 `node server/index.mjs` 仍然可用，服务端依旧零运行时依赖。
+
+图标资源在 `assets/`：`icon.png`（512）、`icon-256.png`、`icon.ico`（16–256 共 7 个尺寸）。启动窗口、任务栏、打包出的 exe 和 Linux 构建都用同一套；`win.signAndEditExecutable` 为 `true`，打包时由 rcedit 把 `assets/icon.ico` 写进 exe（首次构建会下载 winCodeSign）。若网络受限、想跳过这一步，把它改回 `false`，代价是 exe 退回 Electron 默认图标。
 
 构建脚本默认使用 npmmirror 镜像并让 Node 使用系统根证书，用来绕过部分网络环境下访问 GitHub 时的 `unable to verify the first certificate`。如果仍然失败：
 
